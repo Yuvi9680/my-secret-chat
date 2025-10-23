@@ -117,7 +117,7 @@
             const rtdb = firebase.database(); // Sirf Realtime Database
 
             // --------- CONFIGURATION ---------
-            const ROOM_ID = "our-secret-room-v8"; // Naya version (taaki purane logic se conflict na ho)
+            const ROOM_ID = "our-secret-room-v9"; // Naya version (taaki purane logic se conflict na ho)
             const messagesRef = rtdb.ref(`/chats/${ROOM_ID}/messages`);
             const presenceRef = rtdb.ref(`/status/${ROOM_ID}`);
 
@@ -248,7 +248,14 @@
                 deleteMenu.style.display = 'none';
             };
             
-            chatWindow.onclick = () => { deleteMenu.style.display = 'none'; };
+            // --- YEH HAI NAYA FIX (Click Event Collision) ---
+            chatWindow.onclick = (e) => {
+                // Agar message bubble ya uske andar click nahin hua hai, tabhi menu hide karo
+                if (!e.target.closest('.message-bubble')) {
+                    deleteMenu.style.display = 'none';
+                }
+            };
+            // --- END OF FIX ---
 
 
             // -- Functions --
@@ -279,7 +286,7 @@
 
                     newMessageRef.set(msgData); 
                 } else {
-                    newMessageRef.set(msgData); 
+                    newMessageRef.set(msgId); 
                 }
 
                 messageInput.value = '';
@@ -303,14 +310,12 @@
                     if (msg.isLocked) {
                         const encryptedText = localStorage.getItem(`lock_enc_${msgId}`);
                         if (encryptedText) {
-                            // --- YEH HAI NAYA FIX (Locked message click) ---
                             // Humne onclick event ko seedha HTML string mein daal diya hai taaki yeh contextmenu se conflict na kare
                             bubbleContent = `
                                 <div class="message-bubble locked-message" onclick="unlockMessage(event, '${msgId}')">
                                     ${encryptedText.substring(0, 20)}...
                                 </div>
                             `;
-                            // --- END OF FIX ---
                         } else {
                             bubbleContent = `<div class="message-bubble">${msg.text}</div>`;
                         }
@@ -342,8 +347,6 @@
                         deleteMenu.style.top = `${e.pageY}px`;
                         deleteMenu.style.left = `${e.pageX - 100}px`;
                     });
-                    
-                    // Click event listener ko yahaan se hata diya gaya hai kyunki woh ab inline (HTML mein) hai.
                 }
 
                 if (isMe) {
