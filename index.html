@@ -142,24 +142,39 @@
 
             // --- 5. Online Status (Presence) ---
             const myPresenceRef = presenceRef.child(myClientId);
-            
-            // Step 1: Handle connection status and update Firebase
+            let amIConnected = false; // Flag to track my own connection
+
+            // Step 1: Listen for my own connection status
             rtdb.ref(".info/connected").on("value", (snap) => {
-                if (snap.val() === true) {
-                    // Set my presence
-                    myPresenceRef.set("online");
-                    // Set my disconnect handler
-                    myPresenceRef.onDisconnect().remove(); 
+                amIConnected = snap.val(); // Update my connection flag
+                if (amIConnected === true) {
+                    // I am connected
+                    myPresenceRef.set("online"); // Set my presence in Firebase
+                    myPresenceRef.onDisconnect().remove(); // Set disconnect handler
+                    
+                    // Now, check if friend is online (this will run once immediately)
+                    // We need to trigger the logic that presenceRef.on("value") handles
+                    // Let's just read the presenceRef once to set the initial state
+                    presenceRef.once("value", (presenceSnap) => {
+                        updateStatusUI(presenceSnap);
+                    });
+
                 } else {
-                    statusLight.textContent = '● AI Offline';
+                    // I am disconnected
+                    statusLight.textContent = '● AI Offline'; // Set status to offline
                     statusLight.style.color = '#dc3545';
                 }
             });
 
-            // Step 2: Listen for presence changes to update UI
+            // Step 2: Listen for *any* presence change (me or friend)
             presenceRef.on("value", (snap) => {
-                // First, check if I am even connected
-                if (rtdb.ref(".info/connected").val() !== true) {
+                updateStatusUI(snap);
+            });
+
+            // Step 3: A single function to update the UI
+            function updateStatusUI(snap) {
+                // If I am not connected to Firebase, just show Offline.
+                if (!amIConnected) {
                     statusLight.textContent = '● AI Offline';
                     statusLight.style.color = '#dc3545';
                     return;
@@ -175,13 +190,13 @@
                 
                 // Update UI based on friend's status
                 if (isFriendOnline) {
-                    statusLight.textContent = '● AI Online'; // <-- YEH HAI AAPKA FIX
+                    statusLight.textContent = '● AI Online';
                     statusLight.style.color = '#28a745';
                 } else {
-                    statusLight.textContent = '● AI Offline'; // <-- YEH HAI AAPKA FIX
+                    statusLight.textContent = '● AI Offline';
                     statusLight.style.color = '#dc3545';
                 }
-            });
+            }
             // --- END OF STATUS FIX ---
 
             // --- 1. Offline Messages (Poori Queue) ---
@@ -390,7 +405,7 @@
                 } catch (e) { alert("Galat password!"); }
             }
             
-            // -- Crypto Functions --
+             // -- Crypto Functions --
             function encryptText(text, password) {
                 return CryptoJS.AES.encrypt(text, password).toString();
             }
@@ -415,5 +430,3 @@
     </script>
 </body>
 </html>
-
-
