@@ -117,7 +117,7 @@
             const rtdb = firebase.database(); // Sirf Realtime Database
 
             // --------- CONFIGURATION ---------
-            const ROOM_ID = "our-secret-room-v7"; // Naya version (taaki purane logic se conflict na ho)
+            const ROOM_ID = "our-secret-room-v8"; // Naya version (taaki purane logic se conflict na ho)
             const messagesRef = rtdb.ref(`/chats/${ROOM_ID}/messages`);
             const presenceRef = rtdb.ref(`/status/${ROOM_ID}`);
 
@@ -144,8 +144,13 @@
             const myPresenceRef = presenceRef.child(myClientId);
             rtdb.ref(".info/connected").on("value", (snap) => {
                 if (snap.val() === true) {
+                    statusLight.textContent = '● Connected';
+                    statusLight.style.color = '#28a745';
                     myPresenceRef.set("online");
                     myPresenceRef.onDisconnect().remove(); 
+                } else {
+                    statusLight.textContent = '● Connecting...';
+                    statusLight.style.color = '#ffc107';
                 }
             });
 
@@ -157,6 +162,8 @@
                     }
                 });
                 
+                if (rtdb.ref(".info/connected").val() === false) return;
+
                 if (isFriendOnline) {
                     statusLight.textContent = '● Dost Online';
                     statusLight.style.color = '#28a745';
@@ -296,11 +303,14 @@
                     if (msg.isLocked) {
                         const encryptedText = localStorage.getItem(`lock_enc_${msgId}`);
                         if (encryptedText) {
+                            // --- YEH HAI NAYA FIX (Locked message click) ---
+                            // Humne onclick event ko seedha HTML string mein daal diya hai taaki yeh contextmenu se conflict na kare
                             bubbleContent = `
-                                <div class="message-bubble locked-message">
+                                <div class="message-bubble locked-message" onclick="unlockMessage(event, '${msgId}')">
                                     ${encryptedText.substring(0, 20)}...
                                 </div>
                             `;
+                            // --- END OF FIX ---
                         } else {
                             bubbleContent = `<div class="message-bubble">${msg.text}</div>`;
                         }
@@ -332,14 +342,8 @@
                         deleteMenu.style.top = `${e.pageY}px`;
                         deleteMenu.style.left = `${e.pageX - 100}px`;
                     });
-
-                    // --- YEH HAI NAYA FIX (Locked message click) ---
-                    if (msg.isLocked) {
-                        bubble.addEventListener('click', (e) => {
-                            unlockMessage(e, msgId);
-                        });
-                    }
-                    // --- END OF FIX ---
+                    
+                    // Click event listener ko yahaan se hata diya gaya hai kyunki woh ab inline (HTML mein) hai.
                 }
 
                 if (isMe) {
@@ -353,7 +357,8 @@
                 chatWindow.scrollTop = chatWindow.scrollHeight;
             }
 
-            function unlockMessage(event, msgId) {
+            // Is function ko global scope mein rakha taaki inline 'onclick' use call kar sake
+            window.unlockMessage = function(event, msgId) {
                 event.stopPropagation(); 
                 const originalText = localStorage.getItem(`lock_orig_${msgId}`);
                 const encryptedText = localStorage.getItem(`lock_enc_${msgId}`);
