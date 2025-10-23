@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant</title>
+    <!-- Crypto.js library (Sender-Side Lock ke liye) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+    <!-- Socket.io client library (Real-time chat ke liye) -->
+    <!-- Hum server se hi socket.io file le rahe hain -->
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        /* Global styles */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background-color: #f0f2f5;
+            color: #1c1e21;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* App container */
+        #app-container {
+            width: 100%;
+            height: 100%;
+            max-width: 600px; /* Desktop par theek dikhe */
+            background-color: #ffffff;
+            border-radius: 0; /* Mobile par full screen */
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header (AI Bot jaisa dikhane ke liye) */
+        #header {
+            padding: 16px;
+            background-color: #ffffff;
+            border-bottom: 1px solid #e0e0e0;
+            text-align: center;
+        }
+
+        #header h3 {
+            margin: 0;
+            font-weight: 600;
+            color: #000;
+        }
+
+        #header p {
+            margin: 4px 0 0;
+            font-size: 13px;
+            color: #28a745; /* 'Online' status */
+            font-weight: 500;
+        }
+
+        /* Chat window (Jahaan messages dikhenge) */
+        #chat-window {
+            flex-grow: 1;
+            padding: 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            /* Copy-paste rokne ke liye */
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+        }
+
+        /* Message styles */
+        .message-container {
+            display: flex;
+            margin-bottom: 12px;
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+
+        .message-bubble {
+            padding: 10px 14px;
+            border-radius: 18px;
+            font-size: 15px;
+            line-height: 1.4;
+        }
+
+        /* User A (Bhejne waala) */
+        .user-prompt {
+            align-self: flex-end; /* Right side */
+        }
+        .user-prompt .message-bubble {
+            background-color: #007bff;
+            color: white;
+            border-top-right-radius: 4px;
+        }
+
+        /* User B (Dost ka message) - AI Bot jaisa */
+        .ai-response {
+            align-self: flex-start; /* Left side */
+        }
+        .ai-response .message-bubble {
+            background-color: #e4e6eb;
+            color: #050505;
+            border-top-left-radius: 4px;
+        }
+        
+        /* AI Bot ka label */
+        .ai-label {
+            font-size: 12px;
+            color: #65676b;
+            margin-bottom: 4px;
+            margin-left: 4px;
+        }
+
+        /* Encrypted (locked) message */
+        .locked-message {
+            background-color: #f0f0f0 !important;
+            color: #555 !important;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+            cursor: pointer;
+            border: 1px dashed #ccc;
+        }
+        .locked-message::before {
+            content: '🔒 ';
+            font-size: 11px;
+        }
+
+        /* Seen/Unseen Status (Bahut sookshm) */
+        .status-dot {
+            font-size: 10px;
+            margin-left: 5px;
+            color: #a0a0a0;
+        }
+
+        /* Input area */
+        #input-area {
+            display: flex;
+            padding: 12px;
+            border-top: 1px solid #e0e0e0;
+            background-color: #ffffff;
+            align-items: center;
+        }
+
+        #message-input {
+            flex-grow: 1;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            padding: 10px 16px;
+            font-size: 15px;
+            line-height: 1.3;
+            outline: none;
+            margin-right: 8px;
+            resize: none; /* Textarea ko resize se rokna */
+        }
+
+        #message-input:focus {
+            border-color: #007bff;
+        }
+
+        /* Buttons */
+        .chat-button {
+            border: none;
+            background: none;
+            padding: 8px;
+            font-size: 24px; /* Bada icon */
+            cursor: pointer;
+            color: #007bff;
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+        }
+        .chat-button:hover {
+            background-color: #f0f0f0;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <!-- Header -->
+        <div id="header">
+            <h3>AI Assistant</h3>
+            <p>● Online</p>
+        </div>
+
+        <!-- Chat Window -->
+        <div id="chat-window" oncontextmenu="return false;">
+            <!-- Messages yahaan aayenge -->
+            <!-- Example AI Response -->
+            <div class="message-container ai-response">
+                <div>
+                    <div class="ai-label">[AI]</div>
+                    <div class="message-bubble">
+                        Aapke sawaal ka main intezaar kar raha hoon.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div id="input-area">
+            <textarea id="message-input" placeholder="Yahaan type karein..." rows="1"></textarea>
+            <!-- Sender-Side Lock Button -->
+            <button id="lock-button" class="chat-button" title="Message ko lock karein">🔒</button>
+            <!-- Send Button -->
+            <button id="send-button" class="chat-button" title="Bhejein">➤</button>
+        </div>
+    </div>
+
+    <script>
+        // --------- CONFIGURATION ---------
+        // ⚠️ IMPORTANT: YEH LINE BADAL DI GAYI HAI!
+        // Ab yeh automatically apne host server se connect hoga
+        const socket = io(); 
+        
+        // Yeh aapka permanent secret room hai
+        const SECRET_ROOM_ID = "our-permanent-secret-room-a9b3x"; 
+        // ---------------------------------
+
+        // DOM Elements
+        const chatWindow = document.getElementById('chat-window');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const lockButton = document.getElementById('lock-button');
+
+        // Local State
+        let mySocketId = null;
+        let isLocked = false; 
+
+        // -- Event Handlers --
+
+        // 1. Connection
+        socket.on('connect', () => {
+            mySocketId = socket.id;
+            console.log('Server se connect ho gaye:', mySocketId);
+            socket.emit('joinRoom', SECRET_ROOM_ID);
+        });
+
+        // 2. Naya message milna
+        socket.on('newMessage', (msg) => {
+            console.log('Naya message aaya:', msg);
+            displayMessage(msg);
+            
+            if (msg.senderSocketId !== mySocketId) {
+                socket.emit('messageSeen', msg.id);
+            }
+        });
+
+        // 3. Poori chat history milna
+        socket.on('allMessages', (messages) => {
+            console.log('Poori history mili', messages);
+            chatWindow.innerHTML = ''; 
+            messages.forEach(msg => displayMessage(msg));
+        });
+
+        // 4. Message delete karne ka command milna
+        socket.on('deleteMessage', (messageId) => {
+            console.log('Message delete karne ko kaha gaya:', messageId);
+            const msgElement = document.getElementById(messageId);
+            if (msgElement) {
+                msgElement.remove();
+            }
+            localStorage.removeItem(`locked_${messageId}`);
+        });
+
+        // 5. Send Button Click
+        sendButton.onclick = sendMessage;
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault(); 
+                sendMessage();
+            }
+        });
+
+        // 6. Lock Button Click
+        lockButton.onclick = () => {
+            isLocked = !isLocked;
+            lockButton.style.backgroundColor = isLocked ? '#007bff' : 'transparent';
+            lockButton.style.color = isLocked ? 'white' : '#007bff';
+            messageInput.placeholder = isLocked ? 'Locked message type karein...' : 'Yahaan type karein...';
+        };
+
+        // -- Functions --
+
+        function sendMessage() {
+            const text = messageInput.value.trim();
+            if (text === '') return;
+
+            const messageId = `temp_${Date.now()}`; 
+            
+            if (isLocked) {
+                const password = prompt("Is message ko lock karne ke liye ek password banaayein:");
+                if (!password) {
+                    alert("Lock karne ke liye password zaroori hai.");
+                    return;
+                }
+
+                const encryptedText = encryptText(text, password);
+                localStorage.setItem(`locked_${messageId}`, encryptedText);
+                
+                const msgData = {
+                    id: messageId,
+                    text: text, 
+                    senderSocketId: mySocketId,
+                    isLocked: true,
+                    status: 'unseen'
+                };
+                displayMessage(msgData); 
+                
+                socket.emit('sendMessage', { text: text, id: messageId });
+
+            } else {
+                socket.emit('sendMessage', { text: text, id: messageId });
+            }
+
+            messageInput.value = '';
+            isLocked = false;
+            lockButton.style.backgroundColor = 'transparent';
+            lockButton.style.color = '#007bff';
+            messageInput.placeholder = 'Yahaan type karein...';
+            messageInput.style.height = 'auto'; 
+        }
+
+        function displayMessage(msg) {
+            const isMe = msg.senderSocketId === mySocketId;
+            const container = document.createElement('div');
+            container.id = msg.id; 
+            container.className = `message-container ${isMe ? 'user-prompt' : 'ai-response'}`;
+
+            let bubbleContent = '';
+            
+            if (isMe) {
+                if (msg.isLocked || localStorage.getItem(`locked_${msg.id}`)) {
+                    const lockedText = localStorage.getItem(`locked_${msg.id}`) || '🔒 [Locked Message]';
+                    bubbleContent = `
+                        <div class="message-bubble locked-message" onclick="unlockMessage('${msg.id}', '${msg.text}')">
+                            ${lockedText.substring(0, 20)}...
+                        </div>
+                        <span class="status-dot">${msg.status === 'seen' ? '● Seen' : '○ Sent'}</span>
+                    `;
+                } else {
+                    bubbleContent = `
+                        <div class="message-bubble">${msg.text}</div>
+                        <span class="status-dot">${msg.status === 'seen' ? '● Seen' : '○ Sent'}</span>
+                    `;
+                }
+                container.innerHTML = bubbleContent;
+            } else {
+                container.innerHTML = `
+                    <div>
+                        <div class="ai-label">[AI]</div>
+                        <div class="message-bubble">${msg.text}</div>
+                    </div>
+                `;
+            }
+
+            chatWindow.appendChild(container);
+            chatWindow.scrollTop = chatWindow.scrollHeight; 
+        }
+        
+        function unlockMessage(messageId, originalText) {
+            const encryptedData = localStorage.getItem(`locked_${messageId}`);
+            if (!encryptedData) {
+                 alert(`Asli Text:\n\n${originalText}`); 
+                 return;
+            }
+            
+            const password = prompt("Is message ko unlock karne ke liye password daalein:");
+            if (!password) return;
+
+            try {
+                const decryptedText = decryptText(encryptedData, password);
+                alert(`Asli Text:\n\n${decryptedText}`);
+            } catch (e) {
+                alert("Galat password!");
+                console.error("Decryption fail hua:", e);
+            }
+        }
+
+        // -- Crypto Functions --
+        function encryptText(text, password) {
+            return CryptoJS.AES.encrypt(text, password).toString();
+        }
+
+        function decryptText(encryptedText, password) {
+            const bytes = CryptoJS.AES.decrypt(encryptedText, password);
+            const originalText = bytes.toString(CryptoJS.enc.Utf8);
+            if (!originalText) {
+                throw new Error("Decryption failed");
+            }
+            return originalText;
+        }
+
+        messageInput.addEventListener('input', () => {
+            messageInput.style.height = 'auto';
+            messageInput.style.height = (messageInput.scrollHeight) + 'px';
+        });
+
+        document.body.oncontextmenu = (e) => e.preventDefault();
+        document.body.onselectstart = (e) => e.preventDefault();
+
+    </script>
+</body>
+</html>
+
+
+  
