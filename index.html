@@ -117,7 +117,7 @@
             const rtdb = firebase.database(); // Sirf Realtime Database
 
             // --------- CONFIGURATION ---------
-            const ROOM_ID = "our-secret-room-v9"; // Naya version (taaki purane logic se conflict na ho)
+            const ROOM_ID = "our-secret-room-v10"; // Naya version (taaki purane logic se conflict na ho)
             const messagesRef = rtdb.ref(`/chats/${ROOM_ID}/messages`);
             const presenceRef = rtdb.ref(`/status/${ROOM_ID}`);
 
@@ -142,36 +142,47 @@
 
             // --- 5. Online Status (Presence) ---
             const myPresenceRef = presenceRef.child(myClientId);
+            
+            // Step 1: Handle connection status and update Firebase
             rtdb.ref(".info/connected").on("value", (snap) => {
                 if (snap.val() === true) {
-                    statusLight.textContent = '● Connected';
-                    statusLight.style.color = '#28a745';
+                    // Set my presence
                     myPresenceRef.set("online");
+                    // Set my disconnect handler
                     myPresenceRef.onDisconnect().remove(); 
                 } else {
-                    statusLight.textContent = '● Connecting...';
-                    statusLight.style.color = '#ffc107';
+                    statusLight.textContent = '● AI Offline';
+                    statusLight.style.color = '#dc3545';
                 }
             });
 
+            // Step 2: Listen for presence changes to update UI
             presenceRef.on("value", (snap) => {
+                // First, check if I am even connected
+                if (rtdb.ref(".info/connected").val() !== true) {
+                    statusLight.textContent = '● AI Offline';
+                    statusLight.style.color = '#dc3545';
+                    return;
+                }
+
                 let isFriendOnline = false;
                 snap.forEach((child) => {
+                    // Check if there is another user (not me) who is "online"
                     if (child.key !== myClientId && child.val() === "online") {
                         isFriendOnline = true;
                     }
                 });
                 
-                if (rtdb.ref(".info/connected").val() === false) return;
-
+                // Update UI based on friend's status
                 if (isFriendOnline) {
-                    statusLight.textContent = '● Dost Online';
+                    statusLight.textContent = '● AI Online'; // <-- YEH HAI AAPKA FIX
                     statusLight.style.color = '#28a745';
                 } else {
-                    statusLight.textContent = '● Dost Offline';
+                    statusLight.textContent = '● AI Offline'; // <-- YEH HAI AAPKA FIX
                     statusLight.style.color = '#dc3545';
                 }
             });
+            // --- END OF STATUS FIX ---
 
             // --- 1. Offline Messages (Poori Queue) ---
             messagesRef.orderByChild("timestamp")
@@ -248,7 +259,7 @@
                 deleteMenu.style.display = 'none';
             };
             
-            // --- YEH HAI NAYA FIX (Click Event Collision) ---
+            // --- Click Event Collision Fix ---
             chatWindow.onclick = (e) => {
                 // Agar message bubble ya uske andar click nahin hua hai, tabhi menu hide karo
                 if (!e.target.closest('.message-bubble')) {
@@ -286,7 +297,7 @@
 
                     newMessageRef.set(msgData); 
                 } else {
-                    newMessageRef.set(msgId); 
+                    newMessageRef.set(msgData); 
                 }
 
                 messageInput.value = '';
