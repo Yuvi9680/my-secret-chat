@@ -117,7 +117,7 @@
             const rtdb = firebase.database(); // Sirf Realtime Database
 
             // --------- CONFIGURATION ---------
-            const ROOM_ID = "our-secret-room-v6"; // Naya version (taaki purane logic se conflict na ho)
+            const ROOM_ID = "our-secret-room-v7"; // Naya version (taaki purane logic se conflict na ho)
             const messagesRef = rtdb.ref(`/chats/${ROOM_ID}/messages`);
             const presenceRef = rtdb.ref(`/status/${ROOM_ID}`);
 
@@ -172,34 +172,24 @@
                     const msgId = snapshot.key;
                     const msgData = snapshot.val();
 
-                    // --- 3. Delete for Me Logic ---
                     if (msgData.deletedFor && msgData.deletedFor[myClientId]) {
-                        return; // Yeh message mere liye delete ho chuka hai, mat dikhaao
+                        return; 
                     }
 
-                    // --- 4. NEW Snapchat "Seen & Delete" Logic (AAPKE HISAB SE FIX KIYA GAYA) ---
                     if (msgData.senderId !== myClientId && msgData.seen === true) {
-                        // Yeh message mere dost ne bheja tha, aur main ise pehle 'seen' kar chuka tha.
-                        // Ab main waapis aaya hoon ("back aake wapis chat me jaye").
-                        // Ise SIRF MERE LIYE delete karo, database se nahin.
                         messagesRef.child(msgId).child("deletedFor").child(myClientId).set(true); 
-                        return; // Ise display mat karo.
+                        return; 
                     }
                     
-                    // --- Is logic ko bhi fix kiya hai (Sender ke liye) ---
                     if (msgData.senderId === myClientId && msgData.seen === true) {
-                        // Yeh message maine bheja tha, aur mera dost ise pehle 'seen' kar chuka tha.
-                        // Ab main waapis aaya hoon.
-                        // Ise SIRF MERE LIYE delete karo.
                         messagesRef.child(msgId).child("deletedFor").child(myClientId).set(true);
-                        return; // Ise display mat karo.
+                        return; 
                     }
 
 
                     displayMessage(msgId, msgData);
                     
                     if (msgData.senderId !== myClientId && !msgData.seen) {
-                        // Yeh naya message hai jo maine abhi dekha. 'seen' update karo.
                         messagesRef.child(msgId).update({ seen: true });
                     }
                 });
@@ -208,14 +198,11 @@
                 const msgId = snapshot.key;
                 const msgData = snapshot.val();
                 
-                // Update Seen status dot
                 const statusDot = document.querySelector(`#${msgId} .status-dot`);
                 if(statusDot && msgData.seen){
                     statusDot.textContent = '✓ Seen';
                     statusDot.style.color = '#007bff';
                 }
-                
-                // Auto-delete logic yahaan se HATA diya gaya hai.
             });
 
             messagesRef.on("child_removed", (snapshot) => {
@@ -264,10 +251,10 @@
                 if (text === '') return;
 
                 const msgData = {
-                    text: text, // DB mein HAMESHA asli (unlocked) text jaayega
+                    text: text, 
                     senderId: myClientId,
                     seen: false,
-                    isLocked: isLocked, // Sirf sender ko batane ke liye ki yeh locked tha
+                    isLocked: isLocked, 
                     timestamp: firebase.database.ServerValue.TIMESTAMP, 
                     deletedFor: {} 
                 };
@@ -310,7 +297,7 @@
                         const encryptedText = localStorage.getItem(`lock_enc_${msgId}`);
                         if (encryptedText) {
                             bubbleContent = `
-                                <div class="message-bubble locked-message" onclick="unlockMessage(event, '${msgId}')">
+                                <div class="message-bubble locked-message">
                                     ${encryptedText.substring(0, 20)}...
                                 </div>
                             `;
@@ -334,14 +321,25 @@
                 
                 chatWindow.appendChild(container);
                 
-                if(isMe){
-                    container.querySelector('.message-bubble').addEventListener('contextmenu', (e) => {
+                const bubble = container.querySelector('.message-bubble');
+
+                if (isMe) {
+                    // Long-press (delete)
+                    bubble.addEventListener('contextmenu', (e) => {
                         e.preventDefault();
                         selectedMessageId = msgId;
                         deleteMenu.style.display = 'block';
                         deleteMenu.style.top = `${e.pageY}px`;
                         deleteMenu.style.left = `${e.pageX - 100}px`;
                     });
+
+                    // --- YEH HAI NAYA FIX (Locked message click) ---
+                    if (msg.isLocked) {
+                        bubble.addEventListener('click', (e) => {
+                            unlockMessage(e, msgId);
+                        });
+                    }
+                    // --- END OF FIX ---
                 }
 
                 if (isMe) {
