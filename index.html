@@ -2,37 +2,40 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI Assistant</title>
     <!-- Crypto.js library (Sender-Side Lock ke liye) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-    <!-- MQTT.js library (Real-time chat ke liye) -->
-    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <!-- MQTT.js library (Real-time chat ke liye) - Naya, reliable link -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.7.0/mqtt.min.js"></script>
     <style>
         /* Global styles */
-        body {
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent; /* Click flash hatata hai */
+        }
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden; /* Page ko scroll hone se rokta hai */
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
             background-color: #f0f2f5;
-            color: #1c1e21;
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            overflow: hidden;
         }
 
-        /* App container */
+        /* App container - YEH NAYA LAYOUT HAI */
         #app-container {
-            width: 100%;
-            height: 100%;
-            max-width: 600px; /* Desktop par theek dikhe */
-            background-color: #ffffff;
-            border-radius: 0; /* Mobile par full screen */
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            background-color: #ffffff;
+            max-width: 600px; /* Desktop ke liye */
+            margin: 0 auto; /* Desktop par center karega */
         }
 
         /* Header (AI Bot jaisa dikhane ke liye) */
@@ -41,105 +44,42 @@
             background-color: #ffffff;
             border-bottom: 1px solid #e0e0e0;
             text-align: center;
+            flex-shrink: 0; /* Header ko shrink hone se rokta hai */
         }
-
-        #header h3 {
-            margin: 0;
-            font-weight: 600;
-            color: #000;
-        }
-
-        #header p {
-            margin: 4px 0 0;
-            font-size: 13px;
-            color: #ffc107; /* 'Connecting' status */
-            font-weight: 500;
-        }
+        #header h3 { margin: 0; font-weight: 600; color: #000; }
+        #header p { margin: 4px 0 0; font-size: 13px; color: #ffc107; font-weight: 500; }
 
         /* Chat window (Jahaan messages dikhenge) */
         #chat-window {
-            flex-grow: 1;
+            flex-grow: 1; /* Beech ki poori jagah lega */
             padding: 16px;
-            overflow-y: auto;
+            overflow-y: auto; /* Sirf yeh area scroll hoga */
             display: flex;
             flex-direction: column;
-            /* Copy-paste rokne ke liye */
             user-select: none;
             -webkit-user-select: none;
-            -moz-user-select: none;
         }
 
         /* Message styles */
-        .message-container {
-            display: flex;
-            margin-bottom: 12px;
-            max-width: 85%;
-            word-wrap: break-word;
-        }
+        .message-container { display: flex; margin-bottom: 12px; max-width: 85%; word-wrap: break-word; }
+        .message-bubble { padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.4; }
+        .user-prompt { align-self: flex-end; }
+        .user-prompt .message-bubble { background-color: #007bff; color: white; border-top-right-radius: 4px; }
+        .ai-response { align-self: flex-start; }
+        .ai-response .message-bubble { background-color: #e4e6eb; color: #050505; border-top-left-radius: 4px; }
+        .ai-label { font-size: 12px; color: #65676b; margin-bottom: 4px; margin-left: 4px; }
+        .locked-message { background-color: #f0f0f0 !important; color: #555 !important; font-family: 'Courier New', monospace; font-size: 13px; cursor: pointer; border: 1px dashed #ccc; }
+        .locked-message::before { content: '🔒 '; font-size: 11px; }
+        .status-dot { font-size: 10px; margin-left: 5px; color: #a0a0a0; }
 
-        .message-bubble {
-            padding: 10px 14px;
-            border-radius: 18px;
-            font-size: 15px;
-            line-height: 1.4;
-        }
-
-        /* User A (Bhejne waala) */
-        .user-prompt {
-            align-self: flex-end; /* Right side */
-        }
-        .user-prompt .message-bubble {
-            background-color: #007bff;
-            color: white;
-            border-top-right-radius: 4px;
-        }
-
-        /* User B (Dost ka message) - AI Bot jaisa */
-        .ai-response {
-            align-self: flex-start; /* Left side */
-        }
-        .ai-response .message-bubble {
-            background-color: #e4e6eb;
-            color: #050505;
-            border-top-left-radius: 4px;
-        }
-        
-        /* AI Bot ka label */
-        .ai-label {
-            font-size: 12px;
-            color: #65676b;
-            margin-bottom: 4px;
-            margin-left: 4px;
-        }
-
-        /* Encrypted (locked) message */
-        .locked-message {
-            background-color: #f0f0f0 !important;
-            color: #555 !important;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 13px;
-            cursor: pointer;
-            border: 1px dashed #ccc;
-        }
-        .locked-message::before {
-            content: '🔒 ';
-            font-size: 11px;
-        }
-
-        /* Seen/Unseen Status (Bahut sookshm) */
-        .status-dot {
-            font-size: 10px;
-            margin-left: 5px;
-            color: #a0a0a0;
-        }
-
-        /* Input area */
+        /* Input area - YEH BHI FIX KIYA GAYA HAI */
         #input-area {
             display: flex;
             padding: 12px;
             border-top: 1px solid #e0e0e0;
             background-color: #ffffff;
-            align-items: center;
+            align-items: flex-start; /* Textarea ke badhne par align rakhta hai */
+            flex-shrink: 0; /* Input area ko shrink hone se rokta hai */
         }
 
         #message-input {
@@ -151,19 +91,17 @@
             line-height: 1.3;
             outline: none;
             margin-right: 8px;
-            resize: none; /* Textarea ko resize se rokna */
+            resize: none;
+            max-height: 100px; /* Taaki bahut zyaada bada na ho */
+            overflow-y: auto;
         }
+        #message-input:focus { border-color: #007bff; }
 
-        #message-input:focus {
-            border-color: #007bff;
-        }
-
-        /* Buttons */
         .chat-button {
             border: none;
             background: none;
             padding: 8px;
-            font-size: 24px; /* Bada icon */
+            font-size: 24px;
             cursor: pointer;
             color: #007bff;
             border-radius: 50%;
@@ -173,10 +111,9 @@
             align-items: center;
             justify-content: center;
             transition: background-color 0.2s;
+            flex-shrink: 0; /* Buttons ko shrink hone se rokta hai */
         }
-        .chat-button:hover {
-            background-color: #f0f0f0;
-        }
+        .chat-button:hover { background-color: #f0f0f0; }
     </style>
 </head>
 <body>
@@ -189,37 +126,30 @@
 
         <!-- Chat Window -->
         <div id="chat-window" oncontextmenu="return false;">
-            <!-- Example AI Response -->
             <div class="message-container ai-response">
                 <div>
                     <div class="ai-label">[AI]</div>
-                    <div class="message-bubble">
-                        Connecting to secure channel...
-                    </div>
+                    <div class="message-bubble">Connecting to secure channel...</div>
                 </div>
             </div>
         </div>
 
-        <!-- Input Area -->
+        <!-- Input Area (Ab yeh 100% dikhega) -->
         <div id="input-area">
             <textarea id="message-input" placeholder="Yahaan type karein..." rows="1"></textarea>
-            <!-- Sender-Side Lock Button -->
             <button id="lock-button" class="chat-button" title="Message ko lock karein">🔒</button>
-            <!-- Send Button -->
             <button id="send-button" class="chat-button" title="Bhejein">➤</button>
         </div>
     </div>
 
     <script>
         // --------- CONFIGURATION ---------
-        // Yeh hamara naya 'server' hai. Yeh ek free, public MQTT broker hai.
+        // Naya, reliable server URL
         const MQTT_BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
         
-        // Yeh aapka permanent secret room hai
         // ⚠️ Ise badal kar kuch bahut hi random rakhein
         const SECRET_ROOM_TOPIC = "our-permanent-secret-room-a9b3x-yuvraj"; 
         
-        // Alag alag type ke message ke liye 'sub-topics'
         const TOPIC_MESSAGES = `${SECRET_ROOM_TOPIC}/messages`;
         const TOPIC_SEEN = `${SECRET_ROOM_TOPIC}/seen`;
         const TOPIC_DELETE = `${SECRET_ROOM_TOPIC}/delete`;
@@ -235,26 +165,27 @@
         // Local State
         let myClientId = `client_${Math.random().toString(16).substring(2, 10)}`;
         let isLocked = false; 
-        let client = null; // MQTT client
+        let client = null;
 
         // -- MQTT Connection --
         try {
-            client = mqtt.connect(MQTT_BROKER_URL, {
+            // Options object ke saath connect karein
+            const options = {
                 clientId: myClientId,
-                clean: true // Server ko humari history yaad nahi rakhni
-            });
+                clean: true,
+                connectTimeout: 4000 // 4 second timeout
+            };
+            client = mqtt.connect(MQTT_BROKER_URL, options);
 
             client.on('connect', () => {
                 console.log('Broker se connect ho gaye!');
                 statusLight.textContent = '● Online';
                 statusLight.style.color = '#28a745';
                 
-                // Sabhi topics ko subscribe karo
                 client.subscribe(TOPIC_MESSAGES, { qos: 0 });
                 client.subscribe(TOPIC_SEEN, { qos: 0 });
                 client.subscribe(TOPIC_DELETE, { qos: 0 });
                 
-                // Puraane messages ko clear karo (Burn-on-connect)
                 chatWindow.innerHTML = '';
                 displayInitialMessage('Secure channel connected.');
             });
@@ -263,6 +194,7 @@
                 console.error('Connection error:', err);
                 statusLight.textContent = '● Error';
                 statusLight.style.color = 'red';
+                displayInitialMessage('Connection error. Retrying...');
             });
 
             client.on('reconnect', () => {
@@ -274,19 +206,21 @@
             client.on('message', (topic, payload) => {
                 const messageString = payload.toString();
                 let msgData;
-                try {
-                    msgData = JSON.parse(messageString);
-                } catch (e) {
-                    console.error('Galat message format:', messageString);
-                    return;
-                }
+                try { msgData = JSON.parse(messageString); } 
+                catch (e) { console.error('Galat message format:', messageString); return; }
 
-                // Agar yeh mera hi bheja hua message hai, to kuch mat karo
                 if (msgData.clientId === myClientId) {
-                    // Magar, agar yeh messageId update hai, to use display karo
                     if(topic === TOPIC_MESSAGES && msgData.id) {
                          const tempElement = document.getElementById(`temp_${msgData.tempId}`);
-                         if(tempElement) tempElement.id = msgData.id;
+                         if(tempElement) {
+                             tempElement.id = msgData.id;
+                             // status dot ki ID bhi update karein
+                             const statusEl = document.getElementById(`status_temp_${msgData.tempId}`);
+                             if (statusEl) statusEl.id = `status_${msgData.id}`;
+                             // locked message ki ID bhi update karein
+                             const lockEl = tempElement.querySelector('.locked-message');
+                             if(lockEl) lockEl.setAttribute('onclick', `unlockMessage('${msgData.id}', '${CSS.escape(msgData.text)}')`);
+                         }
                     }
                     return;
                 }
@@ -301,24 +235,19 @@
                         break;
                     
                     case TOPIC_SEEN:
-                        // Jab mera bheja hua message 'seen' ho jaaye
                         console.log(`Message seen: ${msgData.seenMessageId}`);
                         const msgElement = document.getElementById(msgData.seenMessageId);
                         if (msgElement) {
                             // "Burn-after-reading" logic
-                            // Jaise hi seen ho, use delete kar do
                             msgElement.remove();
                             localStorage.removeItem(`locked_${msgData.seenMessageId}`);
                         }
                         break;
                     
                     case TOPIC_DELETE:
-                        // Jab doosre user ne "Delete for Everyone" kiya ho
                         console.log(`Message delete hua: ${msgData.deleteMessageId}`);
                         const elementToDelete = document.getElementById(msgData.deleteMessageId);
-                        if (elementToDelete) {
-                            elementToDelete.remove();
-                        }
+                        if (elementToDelete) { elementToDelete.remove(); }
                         break;
                 }
             });
@@ -326,6 +255,8 @@
         } catch (e) {
             console.error("MQTT client banane mein fail:", e);
             alert("Error: Chat service load nahi ho saki.");
+            statusLight.textContent = '● Failed';
+            statusLight.style.color = 'red';
         }
 
         // -- Event Handlers --
@@ -364,7 +295,8 @@
                 text: text,
                 clientId: myClientId,
                 isLocked: isLocked, // Yeh sirf local display ke liye hai
-                tempId: tempId // ID update karne ke liye
+                tempId: tempId, // ID update karne ke liye
+                tempElementId: `temp_${tempId}` // Temp element ko dhoondhne ke liye
             };
             
             if (isLocked) {
@@ -376,21 +308,16 @@
                 const encryptedText = encryptText(text, password);
                 localStorage.setItem(`locked_${messageId}`, encryptedText);
                 
-                // Screen par locked dikhaao
                 displayMessage(msgData, true); 
                 
-                // Server ko *asli* (unlocked) message bhejo
-                const networkMsg = { ...msgData, isLocked: false, text: text };
+                const networkMsg = { ...msgData, isLocked: false };
                 client.publish(TOPIC_MESSAGES, JSON.stringify(networkMsg));
 
             } else {
-                // Screen par normal dikhaao
                 displayMessage(msgData, true); 
-                // Server ko normal message bhejo
                 client.publish(TOPIC_MESSAGES, JSON.stringify(msgData));
             }
 
-            // Input reset karo
             messageInput.value = '';
             isLocked = false;
             lockButton.style.backgroundColor = 'transparent';
@@ -401,25 +328,27 @@
 
         function displayMessage(msg, isMe) {
             const container = document.createElement('div');
-            container.id = msg.id;
+            // Hum pehle temp ID ka istemaal karenge
+            container.id = msg.tempElementId || msg.id; 
             container.className = `message-container ${isMe ? 'user-prompt' : 'ai-response'}`;
 
             let bubbleContent = '';
             
             if (isMe) {
                 // Yeh mera message hai
+                const tempStatusId = `status_${msg.tempElementId || msg.id}`;
                 if (msg.isLocked) {
                     const lockedText = localStorage.getItem(`locked_${msg.id}`) || '🔒 [Locked Message]';
                     bubbleContent = `
-                        <div class="message-bubble locked-message" onclick="unlockMessage('${msg.id}', '${msg.text}')">
+                        <div class="message-bubble locked-message" onclick="unlockMessage('${msg.id}', '${CSS.escape(msg.text)}')">
                             ${lockedText.substring(0, 20)}...
                         </div>
-                        <span class="status-dot" id="status_${msg.id}">○ Sent</span>
+                        <span class="status-dot" id="${tempStatusId}">○ Sent</span>
                     `;
                 } else {
                     bubbleContent = `
                         <div class="message-bubble">${msg.text}</div>
-                        <span class="status-dot" id="status_${msg.id}">○ Sent</span>
+                        <span class="status-dot" id="${tempStatusId}">○ Sent</span>
                     `;
                 }
                 container.innerHTML = bubbleContent;
@@ -440,9 +369,10 @@
             if(isMe){
                 container.querySelector('.message-bubble').addEventListener('contextmenu', (e) => {
                     e.preventDefault();
-                    if(confirm("Kya aap yeh message sabke liye delete karna chahte hain? (Yeh tabhi hoga jab dost ne dekha na ho)")){
+                    if(confirm("Kya aap yeh message sabke liye delete karna chahte hain?")){
+                        // Hum hamesha final ID bhejenge
                         client.publish(TOPIC_DELETE, JSON.stringify({ deleteMessageId: msg.id }));
-                        container.remove(); // Apni screen se bhi delete karo
+                        container.remove(); 
                         localStorage.removeItem(`locked_${msg.id}`);
                     }
                 });
@@ -498,7 +428,6 @@
 
         // "Burn-on-exit" logic
         window.addEventListener('beforeunload', () => {
-            // Jab window band ho, to disconnect karo
             if (client) {
                 client.end();
             }
