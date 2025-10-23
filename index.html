@@ -117,7 +117,7 @@
             const rtdb = firebase.database(); // Sirf Realtime Database
 
             // --------- CONFIGURATION ---------
-            const ROOM_ID = "our-secret-room-v4"; // Naya version
+            const ROOM_ID = "our-secret-room-v6"; // Naya version (taaki purane logic se conflict na ho)
             const messagesRef = rtdb.ref(`/chats/${ROOM_ID}/messages`);
             const presenceRef = rtdb.ref(`/status/${ROOM_ID}`);
 
@@ -174,13 +174,32 @@
 
                     // --- 3. Delete for Me Logic ---
                     if (msgData.deletedFor && msgData.deletedFor[myClientId]) {
-                        return; 
+                        return; // Yeh message mere liye delete ho chuka hai, mat dikhaao
                     }
+
+                    // --- 4. NEW Snapchat "Seen & Delete" Logic (AAPKE HISAB SE FIX KIYA GAYA) ---
+                    if (msgData.senderId !== myClientId && msgData.seen === true) {
+                        // Yeh message mere dost ne bheja tha, aur main ise pehle 'seen' kar chuka tha.
+                        // Ab main waapis aaya hoon ("back aake wapis chat me jaye").
+                        // Ise SIRF MERE LIYE delete karo, database se nahin.
+                        messagesRef.child(msgId).child("deletedFor").child(myClientId).set(true); 
+                        return; // Ise display mat karo.
+                    }
+                    
+                    // --- Is logic ko bhi fix kiya hai (Sender ke liye) ---
+                    if (msgData.senderId === myClientId && msgData.seen === true) {
+                        // Yeh message maine bheja tha, aur mera dost ise pehle 'seen' kar chuka tha.
+                        // Ab main waapis aaya hoon.
+                        // Ise SIRF MERE LIYE delete karo.
+                        messagesRef.child(msgId).child("deletedFor").child(myClientId).set(true);
+                        return; // Ise display mat karo.
+                    }
+
 
                     displayMessage(msgId, msgData);
                     
-                    // --- 4. Seen & Delete Logic ---
-                    if (msgData.senderId !== myClientId) {
+                    if (msgData.senderId !== myClientId && !msgData.seen) {
+                        // Yeh naya message hai jo maine abhi dekha. 'seen' update karo.
                         messagesRef.child(msgId).update({ seen: true });
                     }
                 });
@@ -189,19 +208,14 @@
                 const msgId = snapshot.key;
                 const msgData = snapshot.val();
                 
-                // Update Seen status
+                // Update Seen status dot
                 const statusDot = document.querySelector(`#${msgId} .status-dot`);
                 if(statusDot && msgData.seen){
                     statusDot.textContent = '✓ Seen';
                     statusDot.style.color = '#007bff';
                 }
                 
-                if (msgData.seen === true) {
-                    // --- 4. Seen & Delete Logic ---
-                    setTimeout(() => {
-                        messagesRef.child(msgId).remove();
-                    }, 1000); 
-                }
+                // Auto-delete logic yahaan se HATA diya gaya hai.
             });
 
             messagesRef.on("child_removed", (snapshot) => {
@@ -250,26 +264,28 @@
                 if (text === '') return;
 
                 const msgData = {
-                    text: text,
+                    text: text, // DB mein HAMESHA asli (unlocked) text jaayega
                     senderId: myClientId,
                     seen: false,
-                    isLocked: isLocked,
+                    isLocked: isLocked, // Sirf sender ko batane ke liye ki yeh locked tha
                     timestamp: firebase.database.ServerValue.TIMESTAMP, 
                     deletedFor: {} 
                 };
                 
+                const newMessageRef = messagesRef.push();
+                const msgId = newMessageRef.key;
+
                 if (isLocked) {
                     const password = prompt("Is message ko lock karne ke liye ek password banaayein:");
                     if (!password) { alert("Lock karne ke liye password zaroori hai."); return; }
                     
                     const encryptedText = encryptText(text, password);
-                    msgData.text = encryptedText; 
-                    msgData.originalText = text; 
-                    
-                    messagesRef.push(msgData); 
+                    localStorage.setItem(`lock_enc_${msgId}`, encryptedText);
+                    localStorage.setItem(`lock_orig_${msgId}`, text); 
 
+                    newMessageRef.set(msgData); 
                 } else {
-                    messagesRef.push(msgData); 
+                    newMessageRef.set(msgData); 
                 }
 
                 messageInput.value = '';
@@ -291,24 +307,23 @@
 
                 if (isMe) {
                     if (msg.isLocked) {
-                        bubbleContent = `
-                            <div class="message-bubble locked-message" onclick="unlockMessage(event, '${msg.originalText}')">
-                                ${msg.text.substring(0, 20)}...
-                            </div>
-                        `;
+                        const encryptedText = localStorage.getItem(`lock_enc_${msgId}`);
+                        if (encryptedText) {
+                            bubbleContent = `
+                                <div class="message-bubble locked-message" onclick="unlockMessage(event, '${msgId}')">
+                                    ${encryptedText.substring(0, 20)}...
+                                </div>
+                            `;
+                        } else {
+                            bubbleContent = `<div class="message-bubble">${msg.text}</div>`;
+                        }
                     } else {
                         bubbleContent = `<div class="message-bubble">${textToShow}</div>`;
                     }
+                    container.innerHTML = bubbleContent;
+
                 } else {
-                    if (msg.isLocked) {
-                        bubbleContent = `
-                            <div class="message-bubble locked-message" onclick="unlockFriendMessage(event, '${msg.text}')">
-                                ${msg.text.substring(0, 20)}...
-                            </div>
-                        `;
-                    } else {
-                        bubbleContent = `<div class="message-bubble">${textToShow}</div>`;
-                    }
+                    bubbleContent = `<div class="message-bubble">${textToShow}</div>`;
                     container.innerHTML = `
                         <div>
                             <div class="ai-label">[AI]</div>
@@ -317,8 +332,6 @@
                     `;
                 }
                 
-                if(isMe) container.innerHTML = bubbleContent; 
-
                 chatWindow.appendChild(container);
                 
                 if(isMe){
@@ -342,27 +355,24 @@
                 chatWindow.scrollTop = chatWindow.scrollHeight;
             }
 
-            function unlockMessage(event, originalText) {
+            function unlockMessage(event, msgId) {
                 event.stopPropagation(); 
+                const originalText = localStorage.getItem(`lock_orig_${msgId}`);
+                const encryptedText = localStorage.getItem(`lock_enc_${msgId}`);
+
                 const password = prompt("Apna banaya hua password daalein:");
                 if (!password) return;
+                
                 try {
-                    if(encryptText(originalText, password)) { 
-                         alert(`Asli Text:\n\n${originalText}`);
+                    const decrypted = decryptText(encryptedText, password);
+                    if (decrypted === originalText) {
+                        alert(`Asli Text:\n\n${originalText}`);
+                    } else {
+                        alert("Galat password!");
                     }
                 } catch (e) { alert("Galat password!"); }
             }
             
-            function unlockFriendMessage(event, encryptedText) {
-                event.stopPropagation();
-                const password = prompt("Dost se password poonchh kar daalein:");
-                if (!password) return;
-                try {
-                    const decryptedText = decryptText(encryptedText, password);
-                    alert(`Asli Text:\n\n${decryptedText}`);
-                } catch (e) { alert("Galat password!"); }
-            }
-
             // -- Crypto Functions --
             function encryptText(text, password) {
                 return CryptoJS.AES.encrypt(text, password).toString();
