@@ -100,11 +100,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // =======================================
 
         // Function to get or create a unique client ID
-        function getClientId() {
+        // *** BUG FIX: UID ko parameter ki tarah pass kiya ***
+        function getClientId(uid) {
             let id = localStorage.getItem('mySecretClientId');
             if (!id) {
-                // Use a simpler ID from auth
-                id = auth.currentUser.uid;
+                // Use the UID passed from the login
+                id = uid; 
                 localStorage.setItem('mySecretClientId', id);
             }
             return id;
@@ -158,8 +159,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         // Main function to start the app after login
-        function startApp() {
-            myClientId = getClientId();
+        // *** BUG FIX: UID ko yahaan receive kiya ***
+        function startApp(uid) {
+            myClientId = getClientId(uid); // UID ko pass kiya
             loadFriends();
             initPresence();
             initCallListener();
@@ -174,15 +176,13 @@ document.addEventListener('DOMContentLoaded', () => {
         passwordForm.addEventListener('submit', (e) => {
             e.preventDefault();
             if (passwordInput.value === APP_PASSWORD) {
-                // Correct password
                 passwordError.style.visibility = 'hidden';
-                passwordInput.value = '';
                 
                 // Sign in anonymously to Firebase
                 auth.signInAnonymously()
-                    .then(() => {
-                        // Start the app
-                        startApp();
+                    .then((userCredential) => {
+                        // *** BUG FIX: Login se mila UID seedha startApp ko bheja ***
+                        startApp(userCredential.user.uid);
                     })
                     .catch((error) => {
                         console.error("Firebase Auth Error:", error);
@@ -190,8 +190,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         passwordError.style.visibility = 'visible';
                     });
             } else {
-                // Incorrect password
                 passwordError.style.visibility = 'visible';
+                passwordError.textContent = "Incorrect password. Please try again.";
             }
         });
 
@@ -207,7 +207,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 chatRoomScreen.style.transform = 'translateX(100%)';
             }
             if (screenId === 'chat-room-screen') {
-                // passwordScreen.style.transform = 'translateX(-100%)'; // Not needed
                 chatListScreen.style.transform = 'translateX(-100%)';
                 chatRoomScreen.style.transform = 'translateX(0%)';
             }
@@ -647,7 +646,7 @@ document.addEventListener('DOMContentLoaded', () => {
             container.className = isUser ? 'message-container user-prompt' : 'message-container bot-response';
             
             const bubble = document.createElement('div');
-            bubble.className = 'message-bubble';
+bubble.className = 'message-bubble';
             
             let messageText = '';
             let isLockedForMe = false;
@@ -687,7 +686,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Scroll to bottom
             chatWindow.scrollTop = 0; // 0 is bottom because of column-reverse
-            
             // --- Event Listeners for the Bubble ---
             
             // 1. Click (Tap) listener (for unlocking)
@@ -840,8 +838,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     console.error('Error sending message: ', error);
                     alert('Message could not be sent.');
                 });
-              }
-      // --- Message Deletion ---
+        }
+        
+        // --- Message Deletion ---
         contextDeleteMe.addEventListener('click', () => {
             if (!contextMsgId) return;
             // Delete just for me
@@ -939,8 +938,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return lockedMessages[msgId];
         }
         
-        
-        // =======================================
+// =======================================
         // 7. WebRTC (CALLING) LOGIC
         // =======================================
         
@@ -1177,27 +1175,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         function showCallingScreen(type, status) {
-            // Clear old video elements
-            const videoContainer = document.getElementById('video-container');
-            videoContainer.innerHTML = '';
+            const remoteVideo = document.getElementById('remote-video');
+            const localVideo = document.getElementById('local-video');
             
-            // Add remote video (full screen)
-            const remoteVideo = document.createElement('video');
-            remoteVideo.id = 'remote-video';
-            remoteVideo.autoplay = true;
-            remoteVideo.playsInline = true;
-            if (type === 'voice') remoteVideo.style.display = 'none';
-            
-            // Add local video (picture-in-picture)
-            const localVideo = document.createElement('video');
-            localVideo.id = 'local-video';
-            localVideo.autoplay = true;
-            localVideo.muted = true;
-            localVideo.playsInline = true;
-            if (type === 'voice') localVideo.style.display = 'none';
-            
-            videoContainer.appendChild(remoteVideo);
-            videoContainer.appendChild(localVideo);
+            if (type === 'voice') {
+                remoteVideo.style.display = 'none';
+                localVideo.style.display = 'none';
+            } else {
+                remoteVideo.style.display = 'block';
+                localVideo.style.display = 'block';
+            }
             
             callingStatus.textContent = status;
             callTimer.textContent = '00:00';
@@ -1282,3 +1269,5 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.innerHTML = "Error loading app. Please check console.";
     }
 }); // End of DOMContentLoaded
+        
+                            
