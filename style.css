@@ -42,10 +42,9 @@ body {
     border-radius: 0;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     display: flex;
-    /* This flex-shrink is important for the container */
-    flex-shrink: 0; 
+    flex-direction: column;
     overflow: hidden;
-    transition: transform 0.3s ease-out;
+    position: relative; /* Changed for positioning screens */
 }
 
 /* --- Screen Styles (Password, Chat List, Chat Room) --- */
@@ -55,13 +54,87 @@ body {
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    box-sizing: border-box; /* Added this */
+    transition: transform 0.3s ease-out;
+    position: absolute; /* Changed for layering */
+    top: 0;
 }
 
 /* Hide screens not in view */
-#password-screen { transform: translateX(0%); }
-#chat-list-screen { transform: translateX(100%); }
-#chat-room-screen { transform: translateX(200%); }
+#password-screen { transform: translateX(0%); z-index: 30; }
+#chat-list-screen { transform: translateX(100%); z-index: 20; }
+#chat-room-screen { transform: translateX(100%); z-index: 10; } /* Start at 100% */
+
+/* --- Calling Screen --- */
+#calling-screen {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background-color: #2c2c2c;
+    color: white;
+    z-index: 1000;
+    display: none; /* Hidden by default */
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Video elements container */
+#video-container {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0; left: 0;
+}
+
+#remote-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    top: 0; left: 0;
+}
+
+#local-video {
+    width: 120px;
+    height: 180px;
+    position: absolute;
+    bottom: 120px; /* Above controls */
+    right: 20px;
+    border: 2px solid white;
+    z-index: 1001;
+}
+
+#call-info-container {
+    position: relative;
+    top: 40px; 
+    text-align: center; 
+    z-index: 1002;
+    background: rgba(0,0,0,0.3);
+    padding: 5px 15px;
+    border-radius: 10px;
+}
+#calling-status {
+    font-size: 1.5rem;
+    margin-bottom: 10px;
+}
+#call-timer {
+    font-size: 1.2rem;
+}
+#call-controls-container {
+    position: relative;
+    bottom: 40px; 
+    z-index: 1002;
+}
+#hangup-button {
+    background-color: #e0245e;
+    color: white;
+    border: none;
+    padding: 20px;
+    border-radius: 50%;
+    font-size: 2rem;
+    cursor: pointer;
+}
+
 
 /* --- Header (Shared) --- */
 .header {
@@ -74,22 +147,22 @@ body {
     justify-content: space-between;
     box-sizing: border-box;
     flex-shrink: 0;
+    z-index: 5; /* Header on top */
 }
 
 .header-title {
-    flex-grow: 1; /* Added this */
-    display: flex; /* Added this */
-    flex-direction: column; /* Added this */
-    overflow: hidden; /* Added this */
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Center title */
+    justify-content: center;
+    text-align: center;
+    padding: 0 10px; /* Space from buttons */
 }
-
 .header-title h1 {
     font-size: 18px;
     margin: 0;
     font-weight: 600;
-    white-space: nowrap; /* Added this */
-    overflow: hidden; /* Added this */
-    text-overflow: ellipsis; /* Added this */
 }
 .header-title p {
     font-size: 13px;
@@ -102,10 +175,8 @@ body {
 }
 
 .header-actions {
-    display: flex; /* Added this */
-    align-items: center; /* Added this */
+    display: flex;
 }
-
 .header-actions button {
     background: none;
     border: none;
@@ -113,15 +184,12 @@ body {
     cursor: pointer;
     color: var(--header-text);
     padding: 5px;
-    margin-left: 8px; /* Added this */
 }
 
 #back-to-list-btn {
-    font-size: 28px; /* Made bigger */
-    font-weight: 400; /* Made lighter */
+    font-size: 28px;
+    font-weight: 400;
     padding-right: 10px;
-    margin-left: -5px; /* Aligned left */
-    color: var(--user-bubble-bg); /* Made it blue */
 }
 
 /* --- 1. Password Screen --- */
@@ -141,7 +209,6 @@ body {
     border: 1px solid var(--border-color);
     border-radius: 8px;
     margin-bottom: 15px;
-    box-sizing: border-box;
 }
 #password-submit {
     width: 80%;
@@ -152,7 +219,6 @@ body {
     border: none;
     border-radius: 8px;
     cursor: pointer;
-    box-sizing: border-box;
 }
 #password-error {
     color: var(--danger-text);
@@ -165,6 +231,13 @@ body {
 #chat-list {
     flex-grow: 1;
     overflow-y: auto;
+    padding-top: 60px; /* Space for header */
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
 }
 
 .chat-list-item {
@@ -189,7 +262,7 @@ body {
     font-size: 20px;
     font-weight: 600;
     margin-right: 12px;
-    flex-shrink: 0; /* Added this */
+    flex-shrink: 0;
 }
 
 .chat-list-details {
@@ -219,8 +292,7 @@ body {
     align-items: flex-end;
     font-size: 12px;
     color: var(--system-text);
-    flex-shrink: 0; /* Added this */
-    margin-left: 8px; /* Added this */
+    flex-shrink: 0;
 }
 
 .unread-badge {
@@ -238,8 +310,16 @@ body {
     flex-grow: 1;
     overflow-y: auto;
     padding: 16px;
+    padding-top: 70px; /* Space for header */
+    padding-bottom: 70px; /* Space for input */
     display: flex;
     flex-direction: column-reverse; /* New messages at the bottom */
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
 }
 
 /* This extra div inside chat-window holds the messages */
@@ -261,10 +341,6 @@ body {
     font-size: 15px;
     line-height: 1.4;
     word-wrap: break-word;
-    -webkit-user-select: none; /* Disable copy-paste */
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
 }
 
 .message-meta {
@@ -303,7 +379,12 @@ body {
     padding: 10px;
     border-top: 1px solid var(--border-color);
     background-color: var(--header-bg);
-    flex-shrink: 0; /* Added this */
+    position: absolute; /* Fixed at bottom */
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    box-sizing: border-box;
+    z-index: 5;
 }
 #message-input {
     flex-grow: 1;
@@ -316,8 +397,7 @@ body {
     outline: none;
     resize: none;
     margin-right: 8px;
-    max-height: 100px; /* Added max height */
-    overflow-y: auto; /* Added scroll */
+    max-height: 100px; /* Limit height */
 }
 #send-button, #lock-button {
     background: none;
@@ -326,7 +406,7 @@ body {
     color: var(--user-bubble-bg);
     cursor: pointer;
     padding: 8px;
-    align-self: flex-end; /* Added this */
+    align-self: flex-end; /* Align to bottom */
 }
 
 /* --- Modal (Pop-up) Styles --- */
@@ -342,8 +422,6 @@ body {
     display: none; /* Hidden by default */
     justify-content: center;
     align-items: center;
-    padding: 10px; /* Added padding */
-    box-sizing: border-box; /* Added this */
 }
 
 .modal-content {
@@ -355,7 +433,6 @@ body {
     max-width: 400px;
     border-radius: 12px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    box-sizing: border-box;
 }
 
 .modal h2 {
@@ -409,7 +486,7 @@ body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     display: none; /* Hidden by default */
     padding: 6px 0;
-    width: 200px; /* Added width */
+    width: 220px;
 }
 
 #context-menu button, #chat-list-context-menu button {
@@ -433,7 +510,7 @@ body {
     color: var(--danger-text);
 }
 
-/* --- Calling UI --- */
+/* Incoming Call Alert */
 #incoming-call-alert {
     position: fixed;
     top: 20px;
@@ -448,73 +525,4 @@ body {
     z-index: 1001;
     display: none; /* Hidden by default */
     text-align: center;
-    box-sizing: border-box;
-}
-
-#calling-screen {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background-color: #2c2c2c;
-    color: white;
-    z-index: 1000;
-    display: none; /* Hidden by default */
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-}
-
-#remote-video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    position: absolute;
-    top: 0; left: 0;
-}
-
-#local-video {
-    width: 120px;
-    height: 180px;
-    position: absolute;
-    bottom: 120px; /* Above controls */
-    right: 20px;
-    border: 2px solid white;
-    z-index: 1001;
-}
-
-#call-info-container {
-    position: absolute;
-    top: 40px;
-    text-align: center;
-    z-index: 1002;
-    background-color: rgba(0,0,0,0.3);
-    padding: 5px 15px;
-    border-radius: 10px;
-}
-
-#calling-status {
-    font-size: 1.2rem;
-    margin: 0;
-}
-#call-timer {
-    font-size: 1rem;
-    margin: 5px 0 0 0;
-}
-
-#call-controls-container {
-    position: absolute;
-    bottom: 40px;
-    z-index: 1002;
-}
-
-#hangup-button {
-    background-color: #e0245e;
-    color: white;
-    border: none;
-    padding: 20px;
-    border-radius: 50%;
-    font-size: 2rem;
-    cursor: pointer;
-    line-height: 1;
-    transform: rotate(135deg); /* Hangup icon */
-}
+    }
