@@ -5,16 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI Assistant</title>
     
-    <!-- Link to our new CSS file -->
+    <!-- Link to our CSS file -->
     <link rel="stylesheet" href="style.css">
-    
-    <!-- Firebase Libraries (Saari zaroori libraries) -->
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script> <!-- YEH MISSING THA -->
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
-    
-    <!-- Crypto.js Library (Sender-Side Lock) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </head>
 <body>
 
@@ -80,8 +72,7 @@
     </div>
     
     <!-- OVERLAYS (MODALS, MENUS, CALLING) -->
-
-    <!-- Modal for adding friend, setting passwords, etc. -->
+    <!-- (Saare overlays HTML mein yahaan hain) -->
     <div id="modal" class="modal">
         <div class="modal-content">
             <h2 id="modal-title">Modal Title</h2>
@@ -95,13 +86,11 @@
         </div>
     </div>
     
-    <!-- Context Menu for messages (long press) -->
     <div id="context-menu">
         <button id="context-delete-me">Delete for Me</button>
         <button id="context-delete-everyone" class="delete-danger">Delete for Everyone</button>
     </div>
     
-    <!-- Context Menu for Chat List (long press) -->
     <div id="chat-list-context-menu">
         <button id="context-rename">Rename AI Bot</button>
         <button id="context-lock">Set/Change Chat Lock</button>
@@ -109,7 +98,6 @@
         <button id="context-delete-chat" class="delete-danger">Delete Chat Permanently</button>
     </div>
     
-    <!-- Incoming Call Alert -->
     <div id="incoming-call-alert">
         <h2 id="incoming-call-title">Incoming Call...</h2>
         <p id="incoming-call-from">from AI Bot</p>
@@ -119,25 +107,32 @@
         </div>
     </div>
     
-    <!-- Full-screen Calling UI -->
     <div id="calling-screen">
         <div id="video-container">
             <video id="remote-video" autoplay playsinline></video>
             <video id="local-video" autoplay muted playsinline></video>
         </div>
-        
         <div id="call-info-container">
             <h2 id="calling-status">Connecting...</h2>
             <p id="call-timer">00:00</p>
         </div>
-        
         <div id="call-controls-container">
             <button id="hangup-button">📞</button>
         </div>
     </div>
 
-    <!-- Link to our new JavaScript file -->
+    <!-- 
+      SCRIPT TAGS KO BODY KE END MEIN DAAL DIYA HAI - YAHI FIX HAI
+    -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    
+    <!-- Hamari logic file sabse aakhir mein -->
     <script src="script.js"></script>
     
 </body>
 </html>
+
+
