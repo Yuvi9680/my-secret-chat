@@ -46,6 +46,7 @@
 
         <!-- SCREEN 3: CHAT ROOM (MESSAGES) -->
         <div id="chat-room-screen" class="screen">
+            <!-- Header (Fixed at top) -->
             <div class="header">
                 <button id="back-to-list-btn">←</button>
                 <div class="header-title" id="chat-room-header">
@@ -57,11 +58,15 @@
                     <button id="video-call-btn" title="Video Call">👽</button>
                 </div>
             </div>
+            
+            <!-- Message List (Takes all available space) -->
             <div id="chat-window">
                 <div id="message-list">
                     <!-- Messages will be dynamically inserted here -->
                 </div>
             </div>
+            
+            <!-- Message Form (Fixed at bottom) -->
             <form id="message-form">
                 <textarea id="message-input" placeholder="Type a message..." rows="1"></textarea>
                 <button type="button" id="lock-button" title="Lock Message">🔒</button>
