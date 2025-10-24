@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize Firebase
     try {
         const app = firebase.initializeApp(firebaseConfig);
-        const auth = firebase.auth(); // Yeh zaroori hai
+        const auth = firebase.auth(); 
         const db = firebase.database();
         
         // --- Global Variables ---
@@ -33,14 +33,19 @@ document.addEventListener('DOMContentLoaded', () => {
         let currentChatId = null;
         let currentFriendId = null;
         let currentFriendName = null;
-        let friendsList = {}; // Stores friend data
-        let messageListeners = {}; // To detach old listeners
+        let friendsList = {}; // Stores friend data { friendId: { name: "...", chatLock: "..." } }
+        let messageListeners = {}; // To detach old listeners { chatId: firebaseRef }
+        let unreadListeners = {}; // To detach unread listeners { friendId: firebaseRef }
         let presenceRef;
         let myPresenceRef;
-        let rtpcConnections = {}; // Store RTCPeerConnection objects
+        let rtpcConnections = {}; // Store RTCPeerConnection objects { callId: pc }
         let localStream;
         let remoteStream;
         let callTimerInterval;
+        let currentCallId = null;
+        let currentCallType = null;
+        let currentCallFriendId = null;
+        let isProcessingCleanup = false; // Flag to prevent multiple cleanup runs
 
         // --- DOM Elements ---
         const appContainer = document.getElementById('app-container');
@@ -61,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const messageInput = document.getElementById('message-input');
         const lockButton = document.getElementById('lock-button');
         const sendButton = document.getElementById('send-button');
+        const chatWindow = document.getElementById('chat-window'); 
         
         // Calling DOM Elements
         const voiceCallBtn = document.getElementById('voice-call-btn');
@@ -88,80 +94,76 @@ document.addEventListener('DOMContentLoaded', () => {
         const contextMenu = document.getElementById('context-menu');
         const contextDeleteMe = document.getElementById('context-delete-me');
         const contextDeleteEveryone = document.getElementById('context-delete-everyone');
-        let contextMsgId = null; // Store which message is long-pressed
+        let contextMsgId = null; 
         
         // Context Menu (Chat List) DOM Elements
         const chatListContextMenu = document.getElementById('chat-list-context-menu');
-        let contextFriendId = null; // Store which friend is long-pressed
+        let contextFriendId = null; 
 
 
         // =======================================
         // 1. APP INITIALIZATION
         // =======================================
 
-        // Function to get or create a unique client ID
-        // *** BUG FIX: UID ko parameter ki tarah pass kiya ***
         function getClientId(uid) {
             let id = localStorage.getItem('mySecretClientId');
             if (!id) {
-                // Use the UID passed from the login
                 id = uid; 
                 localStorage.setItem('mySecretClientId', id);
             }
+            myClientId = id; 
             return id;
         }
         
-        // Function to load saved friends from local storage
         function loadFriends() {
             const savedFriends = localStorage.getItem('mySecretFriends');
             if (savedFriends) {
-                friendsList = JSON.parse(savedFriends);
-                renderChatList();
+                try {
+                    friendsList = JSON.parse(savedFriends);
+                    renderChatList();
+                } catch (e) {
+                    console.error("Error parsing friends list:", e);
+                    friendsList = {}; 
+                }
             }
         }
         
-        // Function to save friends to local storage
         function saveFriends() {
             localStorage.setItem('mySecretFriends', JSON.stringify(friendsList));
         }
 
-        // Function to initialize Firebase Presence (Online/Offline)
         function initPresence() {
+            if (!myClientId) return; 
             presenceRef = db.ref('presence');
             myPresenceRef = presenceRef.child(myClientId);
 
-            // Set online status when connected
             db.ref('.info/connected').on('value', (snapshot) => {
                 if (snapshot.val() === true) {
                     myPresenceRef.set(true);
-                    // Set offline status on disconnect
                     myPresenceRef.onDisconnect().remove();
                 }
             });
         }
         
-        // Function to initialize listener for incoming calls
         function initCallListener() {
+            if (!myClientId) return; 
             const callRef = db.ref(`calls/${myClientId}`);
+            callRef.off(); 
             callRef.on('child_added', (snapshot) => {
                 const callData = snapshot.val();
-                if (callData && callData.offer) {
-                    // Incoming call!
+                if (callData && callData.offer && !callData.declined && !callData.hungup && !callData.answer) {
                     const friendName = friendsList[callData.from]?.name || `AI Bot (${callData.from.substring(0,6)}...)`;
                     showIncomingCallAlert(callData.type, friendName, callData.from, snapshot.key);
                 }
-                // Listen for hangup signals
-                if (callData && callData.hungup) {
-                    hangUp(false); // Hang up without sending another signal
-                    snapshot.ref.remove();
+                if (callData && (callData.hungup || callData.declined)) {
+                   snapshot.ref.remove();
                 }
             });
         }
         
-        // Main function to start the app after login
-        // *** BUG FIX: UID ko yahaan receive kiya ***
         function startApp(uid) {
-            myClientId = getClientId(uid); // UID ko pass kiya
+            myClientId = getClientId(uid); 
+            console.log("App started for user:", myClientId);
             loadFriends();
             initPresence();
             initCallListener();
@@ -175,62 +177,77 @@ document.addEventListener('DOMContentLoaded', () => {
 
         passwordForm.addEventListener('submit', (e) => {
             e.preventDefault();
+            passwordError.style.visibility = 'hidden'; 
+            
             if (passwordInput.value === APP_PASSWORD) {
-                passwordError.style.visibility = 'hidden';
-                
-                // Sign in anonymously to Firebase
-                auth.signInAnonymously()
-                    .then((userCredential) => {
-                        // *** BUG FIX: Login se mila UID seedha startApp ko bheja ***
-                        startApp(userCredential.user.uid);
-                    })
-                    .catch((error) => {
-                        console.error("Firebase Auth Error:", error);
-                        passwordError.textContent = "Could not connect to services.";
-                        passwordError.style.visibility = 'visible';
-                    });
+                if (auth.currentUser) {
+                    startApp(auth.currentUser.uid);
+                } else {
+                    auth.signInAnonymously()
+                        .then((userCredential) => {
+                            if (userCredential && userCredential.user) {
+                                startApp(userCredential.user.uid);
+                            } else {
+                                throw new Error("Anonymous sign-in failed: No user returned.");
+                            }
+                        })
+                        .catch((error) => {
+                            console.error("Firebase Auth Error:", error);
+                            passwordError.textContent = "Could not connect to services. Check connection or Firebase setup.";
+                            passwordError.style.visibility = 'visible';
+                        });
+                }
             } else {
-                passwordError.style.visibility = 'visible';
                 passwordError.textContent = "Incorrect password. Please try again.";
+                passwordError.style.visibility = 'visible';
             }
         });
 
         function navigateTo(screenId) {
-            if (screenId === 'password-screen') {
-                passwordScreen.style.transform = 'translateX(0%)';
-                chatListScreen.style.transform = 'translateX(100%)';
-                chatRoomScreen.style.transform = 'translateX(100%)';
-            }
-            if (screenId === 'chat-list-screen') {
-                passwordScreen.style.transform = 'translateX(-100%)';
-                chatListScreen.style.transform = 'translateX(0%)';
-                chatRoomScreen.style.transform = 'translateX(100%)';
-            }
-            if (screenId === 'chat-room-screen') {
-                chatListScreen.style.transform = 'translateX(-100%)';
-                chatRoomScreen.style.transform = 'translateX(0%)';
+             console.log("Navigating to:", screenId);
+            if (passwordScreen && chatListScreen && chatRoomScreen) {
+                if (screenId === 'password-screen') {
+                    passwordScreen.style.transform = 'translateX(0%)';
+                    chatListScreen.style.transform = 'translateX(100%)';
+                    chatRoomScreen.style.transform = 'translateX(100%)';
+                }
+                if (screenId === 'chat-list-screen') {
+                    passwordScreen.style.transform = 'translateX(-100%)';
+                    chatListScreen.style.transform = 'translateX(0%)';
+                    chatRoomScreen.style.transform = 'translateX(100%)';
+                    currentChatId = null;
+                    currentFriendId = null;
+                    currentFriendName = null;
+                }
+                if (screenId === 'chat-room-screen') {
+                    chatListScreen.style.transform = 'translateX(-100%)';
+                    chatRoomScreen.style.transform = 'translateX(0%)';
+                }
+            } else {
+                console.error("Navigation error: One or more screen elements not found.");
             }
         }
 
+
         backToListBtn.addEventListener('click', () => {
-            navigateTo('chat-list-screen');
-            // Detach old message listener
             if (currentChatId && messageListeners[currentChatId]) {
+                 console.log("Detaching listener for chat:", currentChatId);
                 messageListeners[currentChatId].off();
                 delete messageListeners[currentChatId];
             }
-            // Stop listening to friend's presence
-            if (currentFriendId) {
+            if (currentFriendId && presenceRef) {
+                 console.log("Detaching presence listener for friend:", currentFriendId);
                 presenceRef.child(currentFriendId).off();
             }
-            currentChatId = null;
-            currentFriendId = null;
+            // Detach unread listener when leaving chat? No, keep it for the list view.
+            navigateTo('chat-list-screen');
         });
         
-        // Auto-resize textarea
         messageInput.addEventListener('input', () => {
             messageInput.style.height = 'auto';
-            messageInput.style.height = (messageInput.scrollHeight) + 'px';
+            const scrollHeight = messageInput.scrollHeight;
+            const maxHeight = 100; 
+            messageInput.style.height = Math.min(scrollHeight, maxHeight) + 'px';
         });
 
         // =======================================
@@ -238,6 +255,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // =======================================
         
         myIdButton.addEventListener('click', () => {
+             if (!myClientId) {
+                 alert("Cannot get ID before login is complete.");
+                 return;
+             }
             showModal({
                 title: "My Secret ID",
                 text: "Share this ID with your friend. This is your permanent, secret identity.",
@@ -247,26 +268,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 secondaryButton: "Close"
             }, (result) => {
                 if (result.primary) {
-                    // Copy to clipboard
                     try {
                         navigator.clipboard.writeText(myClientId).then(() => {
                             alert("ID copied to clipboard!");
                         }).catch(err => {
-                            // Fallback for older browsers
                             modalInputText.select();
                             document.execCommand('copy');
-                            alert("ID copied to clipboard!");
+                            alert("ID copied to clipboard (fallback)!");
                         });
                     } catch (e) {
-                        modalInputText.select();
-                        document.execCommand('copy');
-                        alert("ID copied to clipboard!");
+                         modalInputText.select();
+                         document.execCommand('copy');
+                         alert("ID copied to clipboard (fallback)!");
                     }
                 }
             });
         });
 
         addFriendButton.addEventListener('click', () => {
+             if (!myClientId) {
+                 alert("Cannot add friend before login is complete.");
+                 return;
+             }
             showModal({
                 title: "Add AI Bot",
                 text: "Enter your friend's Secret ID to start chatting.",
@@ -277,87 +300,95 @@ document.addEventListener('DOMContentLoaded', () => {
             }, (result) => {
                 if (result.primary && result.inputText) {
                     const friendId = result.inputText.trim();
+                    if (!friendId) {
+                         alert("Friend ID cannot be empty.");
+                         return;
+                    }
                     if (friendId === myClientId) {
                         alert("You cannot add yourself.");
                         return;
                     }
                     if (friendsList[friendId]) {
-                        // If friend exists, just open the chat
                         handleChatOpen(friendId, friendsList[friendId].name, friendsList[friendId].chatLock);
                         return;
                     }
                     
-                    // Add new friend with a default name
                     const newFriendName = `AI Bot (${friendId.substring(0, 6)}...)`;
                     friendsList[friendId] = {
                         name: newFriendName,
-                        chatLock: null // No lock by default
+                        chatLock: null 
                     };
                     saveFriends();
-                    renderChatList();
-                    
-                    // Open chat immediately
-                    openChatRoom(friendId, newFriendName);
+                    renderChatList(); 
+                    openChatRoom(friendId, newFriendName); 
                 }
             });
         });
         
-        // Function to generate a sorted chat ID
         function getChatId(friendId) {
+             if (!myClientId || !friendId) return null; 
             const ids = [myClientId, friendId].sort();
             return ids.join('_');
         }
         
-        // Render the list of chats
         function renderChatList() {
+             if (!chatList) return; 
             chatList.innerHTML = '';
-            if (Object.keys(friendsList).length === 0) {
+            const friendIds = Object.keys(friendsList);
+
+            if (friendIds.length === 0) {
                 chatList.innerHTML = `<p style="text-align: center; color: var(--system-text); padding: 20px;">Your added AI Bots will appear here. Tap '+' to add one.</p>`;
                 return;
             }
             
-            Object.keys(friendsList).forEach(friendId => {
+            friendIds.forEach(friendId => {
                 const friend = friendsList[friendId];
+                if (!friend || !friend.name) {
+                     console.warn("Skipping invalid friend data for ID:", friendId);
+                     return; 
+                }
                 const chatListItem = document.createElement('div');
                 chatListItem.className = 'chat-list-item';
                 chatListItem.dataset.friendId = friendId;
+                const avatarLetter = friend.name.charAt(0).toUpperCase();
+                const friendNameText = friend.name;
+                
                 chatListItem.innerHTML = `
-                    <div class="chat-list-avatar">${friend.name.charAt(0).toUpperCase()}</div>
+                    <div class="chat-list-avatar"></div>
                     <div class="chat-list-details">
-                        <div class="chat-list-name">${friend.name}</div>
-                        <div class="chat-list-preview" id="preview_${friendId}">...</div>
+                        <div class="chat-list-name"></div>
+                        <div class="chat-list-preview" id="preview_${friendId}">Loading...</div> 
                     </div>
                     <div class="chat-list-meta">
                         <span class="unread-badge" id="unread_${friendId}" style="display: none;">0</span>
                     </div>
                 `;
+                chatListItem.querySelector('.chat-list-avatar').textContent = avatarLetter;
+                chatListItem.querySelector('.chat-list-name').textContent = friendNameText;
                 
-                // Click to open chat
                 chatListItem.addEventListener('click', () => {
                     handleChatOpen(friendId, friend.name, friend.chatLock);
                 });
                 
-                // Long press to rename/lock/delete
                 chatListItem.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
+                    e.stopPropagation(); 
                     showChatListContextMenu(e, friendId);
                 });
                 
                 chatList.appendChild(chatListItem);
                 
-                // Start listening for unread messages
+                // Start listening AFTER adding to DOM
                 listenForUnread(friendId);
             });
         }
         
-        // Handle opening a chat (check for lock)
         function handleChatOpen(friendId, friendName, chatLock) {
             if (chatLock) {
-                // This chat is locked, ask for password
                 showModal({
                     title: `Unlock Chat: ${friendName}`,
                     text: "This chat is locked. Please enter the password.",
-                    password: "",
+                    password: "", 
                     primaryButton: "Unlock",
                     secondaryButton: "Cancel"
                 }, (result) => {
@@ -368,103 +399,119 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 });
             } else {
-                // No lock, open directly
                 openChatRoom(friendId, friendName);
             }
         }
         
-        // Context menu for chat list items
         function showChatListContextMenu(e, friendId) {
-            contextFriendId = friendId; // Store which friend
-            
-            // Show menu
+            contextFriendId = friendId; 
             chatListContextMenu.style.top = `${e.clientY}px`;
             chatListContextMenu.style.left = `${e.clientX}px`;
             chatListContextMenu.style.display = 'block';
         }
         
-        // Listeners for the chat list context menu (defined once)
+        // Listeners for the chat list context menu 
         document.getElementById('context-rename').onclick = () => {
             if (!contextFriendId) return;
             const friendId = contextFriendId;
-            const oldName = friendsList[friendId].name;
+            const oldName = friendsList[friendId]?.name || `AI Bot (${friendId.substring(0,6)}...)`;
             showModal({
                 title: "Rename AI Bot",
                 text: `Enter a new name for "${oldName}".`,
-                inputText: oldName,
+                inputText: oldName, 
                 primaryButton: "Save",
                 secondaryButton: "Cancel"
             }, (result) => {
                 if (result.primary && result.inputText) {
+                     if (!friendsList[friendId]) friendsList[friendId] = {}; 
                     friendsList[friendId].name = result.inputText;
                     saveFriends();
-                    renderChatList();
+                    renderChatList(); 
                 }
             });
-            chatListContextMenu.style.display = 'none';
+            chatListContextMenu.style.display = 'none'; 
         };
 
         document.getElementById('context-lock').onclick = () => {
             if (!contextFriendId) return;
             const friendId = contextFriendId;
-            showModal({
-                title: "Set Chat Lock",
-                text: `Set a password for this chat.`,
-                password: "",
-                placeholder: "New password",
-                primaryButton: "Set Lock",
-                secondaryButton: "Cancel"
-            }, (result) => {
-                if (result.primary && result.password) {
-                    friendsList[friendId].chatLock = result.password;
-                    saveFriends();
-                    alert("Chat lock set!");
-                }
-            });
-            chatListContextMenu.style.display = 'none';
-        };
+            const currentLock = friendsList[friendId]?.chatLock;
 
-        document.getElementById('context-remove-lock').onclick = () => {
-            if (!contextFriendId) return;
-            const friendId = contextFriendId;
-            if (!friendsList[friendId].chatLock) {
-                alert("This chat is not locked.");
-                chatListContextMenu.style.display = 'none';
-                return;
-            }
+             // Logic slightly adjusted: One modal for set/change/remove
             showModal({
-                title: "Remove Chat Lock",
-                text: `Enter the current password to remove the lock.`,
-                password: "",
-                placeholder: "Current password",
-                primaryButton: "Remove",
+                title: currentLock ? "Change/Remove Chat Lock" : "Set Chat Lock",
+                text: currentLock ? "Enter new password, or leave blank to remove lock." : "Set a password for this chat.",
+                password: "", // Show password field
+                passwordPlaceholder: "New password (or blank to remove)",
+                primaryButton: "Save",
                 secondaryButton: "Cancel"
             }, (result) => {
-                if (result.primary && result.password === friendsList[friendId].chatLock) {
-                    friendsList[friendId].chatLock = null;
-                    saveFriends();
-                    alert("Chat lock removed!");
-                } else if (result.primary) {
-                    alert("Incorrect password.");
-                }
+                 if (result.primary) {
+                     const newPassword = result.password; // Can be blank
+
+                     const proceed = () => {
+                         if (!friendsList[friendId]) friendsList[friendId] = {};
+                         friendsList[friendId].chatLock = newPassword || null; // Store null if blank
+                         saveFriends();
+                         alert(newPassword ? "Chat lock updated!" : "Chat lock removed!");
+                     };
+
+                     // If changing or removing, confirm old password first
+                     if (currentLock) {
+                         showModal({
+                             title: "Confirm Current Lock",
+                             text: `Enter the current password for "${friendsList[friendId].name}" to make changes.`,
+                             password: "",
+                             passwordPlaceholder: "Current password",
+                             primaryButton: "Confirm",
+                             secondaryButton: "Cancel"
+                         }, (confirmResult) => {
+                             if (confirmResult.primary && confirmResult.password === currentLock) {
+                                 proceed(); // Old password correct, proceed
+                             } else if (confirmResult.primary) {
+                                 alert("Incorrect current password.");
+                             }
+                         });
+                     } else {
+                         proceed(); // Setting lock for the first time
+                     }
+                 }
             });
-            chatListContextMenu.style.display = 'none';
+            chatListContextMenu.style.display = 'none'; // Hide menu
         };
+        
+        // Hide the separate remove button as logic is combined
+        document.getElementById('context-remove-lock').style.display = 'none'; 
         
         document.getElementById('context-delete-chat').onclick = () => {
             if (!contextFriendId) return;
             const friendId = contextFriendId;
-            if (confirm(`Are you sure you want to delete all messages and history with "${friendsList[friendId].name}"? This cannot be undone.`)) {
+            const friendName = friendsList[friendId]?.name || `AI Bot (${friendId.substring(0,6)}...)`;
+            if (confirm(`DELETE CHAT?\n\nAre you sure you want to permanently delete all messages and history with "${friendName}"? This cannot be undone.`)) {
                 // Delete chat messages from Firebase
                 const chatId = getChatId(friendId);
-                db.ref(`messages/${chatId}`).remove();
+                if (chatId) {
+                     db.ref(`messages/${chatId}`).remove()
+                       .then(() => console.log("Chat messages deleted from DB for:", chatId))
+                       .catch(e => console.error("Error deleting chat from DB:", e));
+                }
                 
                 // Delete friend from local storage
                 delete friendsList[friendId];
                 saveFriends();
-                renderChatList();
+                renderChatList(); // Update UI
+                 
+                 // Detach listeners associated with this friend
+                 if (messageListeners[chatId]) {
+                     messageListeners[chatId].off();
+                     delete messageListeners[chatId];
+                 }
+                  if (unreadListeners[friendId]) {
+                      unreadListeners[friendId].off();
+                      delete unreadListeners[friendId];
+                  }
             }
-            chatListContextMenu.style.display = 'none';
+            chatListContextMenu.style.display = 'none'; // Hide menu
         };
 
 
@@ -477,59 +524,87 @@ document.addEventListener('DOMContentLoaded', () => {
             currentFriendId = friendId;
             currentFriendName = friendName;
 
+             if (!currentChatId) {
+                 console.error("Cannot open chat room: Invalid IDs");
+                 alert("Error opening chat.");
+                 navigateTo('chat-list-screen');
+                 return;
+             }
+
             chatRoomName.textContent = friendName;
-            messageList.innerHTML = ''; // Clear old messages
+            messageList.innerHTML = ''; 
             
-            // Check for seen messages on load
-            cleanupSeenMessages();
+            // Cleanup seen messages when entering the chat
+            cleanupSeenMessages(); 
 
+            // Detach old friend presence listener
+             if (currentFriendId && presenceRef) {
+                 presenceRef.child(currentFriendId).off();
+             }
+            
             // Listen for friend's online status
-            presenceRef.child(friendId).on('value', (snapshot) => {
-                if (snapshot.val() === true) {
-                    chatRoomStatus.textContent = '● AI Online';
-                    chatRoomStatus.className = 'online';
-                } else {
-                    chatRoomStatus.textContent = '● AI Offline';
-                    chatRoomStatus.className = '';
-                }
-            });
+            if (presenceRef) {
+                presenceRef.child(friendId).on('value', (snapshot) => {
+                    if (currentFriendId === friendId) { 
+                        if (snapshot.val() === true) {
+                            chatRoomStatus.textContent = '● AI Online';
+                            chatRoomStatus.className = 'online';
+                        } else {
+                            chatRoomStatus.textContent = '● AI Offline';
+                            chatRoomStatus.className = '';
+                        }
+                    }
+                });
+            } else {
+                 chatRoomStatus.textContent = '● Status Unknown';
+                 chatRoomStatus.className = '';
+            }
 
-            // Load messages
+            // Load messages AFTER cleanup potentially runs
             loadMessages();
             
-            // Show the chat room screen
             navigateTo('chat-room-screen');
+            setTimeout(() => chatWindow.scrollTop = chatWindow.scrollHeight, 100); 
         }
 
         // Load and listen for new messages
         function loadMessages() {
+            if (!currentChatId) return;
             const messagesRef = db.ref(`messages/${currentChatId}`);
             
-            // Detach old listener if exists
             if (messageListeners[currentChatId]) {
+                 console.log("Detaching previous listener for chat:", currentChatId);
                 messageListeners[currentChatId].off();
             }
 
-            // Listen for new messages
+            console.log("Attaching listener for chat:", currentChatId);
             messageListeners[currentChatId] = messagesRef.orderByChild('timestamp');
             
+            // Use child_added for initial load and new messages
             messageListeners[currentChatId].on('child_added', (snapshot) => {
                 const msg = snapshot.val();
+                if (!msg) return; 
                 msg.id = snapshot.key;
-                displayMessage(msg, true);
+                displayMessage(msg, true); // True indicates potentially new message (scroll)
+            }, (error) => {
+                console.error("Error listening for messages:", error);
+                 if (error.code === 'PERMISSION_DENIED') {
+                     alert("Error: Cannot access chat messages. Check Firebase rules.");
+                     navigateTo('chat-list-screen'); 
+                 }
             });
             
-            // Listen for message changes (seen, delete)
+            // Listen for message changes (seen, delete 'for me')
             messageListeners[currentChatId].on('child_changed', (snapshot) => {
                 const msg = snapshot.val();
+                 if (!msg) return; 
                 msg.id = snapshot.key;
                 const msgElement = document.getElementById(msg.id);
                 if (msgElement) {
-                    // Check for deletion
                     if (msg.deletedFor && msg.deletedFor[myClientId]) {
                         msgElement.remove();
+                        updateChatListPreview(currentFriendId);
                     } else {
-                        // Update seen status
                         const meta = msgElement.querySelector('.message-meta');
                         if (meta && msg.seenBy && msg.seenBy[currentFriendId] && !meta.textContent.includes('Seen')) {
                             meta.textContent += ' ✓ Seen';
@@ -538,54 +613,57 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
             
-            // Listen for message deletion
+            // Listen for message deletion (deleted 'for everyone')
             messageListeners[currentChatId].on('child_removed', (snapshot) => {
                 const msgElement = document.getElementById(snapshot.key);
                 if (msgElement) {
                     msgElement.remove();
+                     updateChatListPreview(currentFriendId);
                 }
             });
         }
         
-        // Listen for unread messages for chat list
+        // Listen for unread messages count and preview for chat list
         function listenForUnread(friendId) {
+             // Detach previous listener first
+             if (unreadListeners[friendId]) {
+                  unreadListeners[friendId].off(); 
+             }
+             
             const chatId = getChatId(friendId);
+             if (!chatId) return;
             const messagesRef = db.ref(`messages/${chatId}`);
             
-            // Get last preview message
-            messagesRef.orderByChild('timestamp').limitToLast(1).on('value', (snapshot) => {
-                if (snapshot.exists()) {
-                    snapshot.forEach((child) => {
-                        const msg = child.val();
-                        // Only update if not deleted for me
-                        if (!msg.deletedFor || !msg.deletedFor[myClientId]) {
-                            const previewEl = document.getElementById(`preview_${friendId}`);
-                            if (previewEl) {
-                                if (msg.type === 'locked' && msg.senderId === myClientId) {
-                                    previewEl.textContent = '🔒 Locked Message';
-                                } else {
-                                    previewEl.textContent = msg.text;
-                                }
-                            }
-                        }
-                    });
-                }
-            });
+             // Store the reference
+             unreadListeners[friendId] = messagesRef; 
             
-            // Get unread count
-            messagesRef.on('value', (snapshot) => {
+             unreadListeners[friendId].on('value', (snapshot) => {
                 let unreadCount = 0;
+                let lastMessageText = '...';
+                let lastMessageType = 'normal';
+                let lastMessageSender = null;
+                
                 snapshot.forEach((child) => {
                     const msg = child.val();
-                    // Count only messages *not* sent by me and *not* seen by me
+                     if (!msg) return; 
+
+                    // Check for unread
                     if (msg.senderId !== myClientId && 
                         (!msg.seenBy || !msg.seenBy[myClientId]) &&
                         (!msg.deletedFor || !msg.deletedFor[myClientId])) 
                     {
                         unreadCount++;
                     }
+                    
+                    // Update last message preview (only if not deleted for me)
+                    if (!msg.deletedFor || !msg.deletedFor[myClientId]) {
+                        lastMessageText = msg.text;
+                        lastMessageType = msg.type;
+                        lastMessageSender = msg.senderId;
+                    }
                 });
                 
+                // Update Badge
                 const badgeEl = document.getElementById(`unread_${friendId}`);
                 if (badgeEl) {
                     if (unreadCount > 0) {
@@ -595,49 +673,102 @@ document.addEventListener('DOMContentLoaded', () => {
                         badgeEl.style.display = 'none';
                     }
                 }
+
+                 // Update Preview
+                 const previewEl = document.getElementById(`preview_${friendId}`);
+                 if (previewEl) {
+                     if (lastMessageType === 'locked' && lastMessageSender === myClientId) {
+                         previewEl.textContent = '🔒 Locked Message';
+                     } else {
+                          // Ensure text is not undefined or null
+                         previewEl.textContent = lastMessageText || '...'; 
+                     }
+                 }
             });
         }
         
-        // Listen for new chats from unknown people
+        // Helper to update preview specifically (e.g., after deletion)
+        function updateChatListPreview(friendId) {
+            if (!friendId) return; // Add check for friendId
+             const chatId = getChatId(friendId);
+             if (!chatId) return;
+             const messagesRef = db.ref(`messages/${chatId}`);
+             messagesRef.orderByChild('timestamp').limitToLast(1).once('value', (snapshot) => {
+                 let lastMessageText = '...';
+                 let lastMessageType = 'normal';
+                 let lastMessageSender = null;
+                 if (snapshot.exists()) {
+                     snapshot.forEach((child) => {
+                         const msg = child.val();
+                          // Check if msg exists and has data before accessing properties
+                         if (msg && (!msg.deletedFor || !msg.deletedFor[myClientId])) {
+                             lastMessageText = msg.text;
+                             lastMessageType = msg.type;
+                             lastMessageSender = msg.senderId;
+                         }
+                     });
+                 }
+                  const previewEl = document.getElementById(`preview_${friendId}`);
+                 if (previewEl) {
+                     if (lastMessageType === 'locked' && lastMessageSender === myClientId) {
+                         previewEl.textContent = '🔒 Locked Message';
+                     } else {
+                         previewEl.textContent = lastMessageText || '...';
+                     }
+                 }
+             });
+        }
+
+                      // Listen for new chats initiated by others
         function listenForNewChats() {
+            if (!myClientId) return;
             db.ref('messages').on('child_added', (snapshot) => {
                 const chatId = snapshot.key;
-                if (chatId.includes(myClientId)) {
-                    const friendId = chatId.replace(myClientId, '').replace('_', '');
-                    if (!friendsList[friendId] && friendId) {
-                        // This is a new chat from someone not in our list
-                        // Load the first message to get senderId (which is friendId)
-                        db.ref(`messages/${chatId}`).orderByChild('timestamp').limitToFirst(1).once('value', (msgSnap) => {
-                            if (!msgSnap.exists()) return;
-                            msgSnap.forEach((childSnap) => {
-                                const senderId = childSnap.val().senderId;
-                                if(senderId === friendId) {
-                                    const newFriendName = `AI Bot (${senderId.substring(0, 6)}...)`;
-                                    friendsList[senderId] = {
-                                        name: newFriendName,
-                                        chatLock: null
-                                    };
-                                    saveFriends();
-                                    renderChatList();
-                                }
-                            });
+                // Basic validation for chatId format
+                if (!chatId || !chatId.includes('_') || !chatId.includes(myClientId)) return; 
+                
+                const friendId = chatId.replace(myClientId, '').replace('_', '');
+                if (!friendsList[friendId] && friendId) {
+                    db.ref(`messages/${chatId}`).orderByChild('timestamp').limitToFirst(1).once('value', (msgSnap) => {
+                        if (!msgSnap.exists()) return;
+                        msgSnap.forEach((childSnap) => {
+                             const msgData = childSnap.val();
+                             // Check if message data and senderId exist
+                             if (msgData && msgData.senderId === friendId) { 
+                                console.log("Detected new chat initiated by:", friendId);
+                                const newFriendName = `AI Bot (${senderId.substring(0, 6)}...)`;
+                                friendsList[senderId] = { name: newFriendName, chatLock: null };
+                                saveFriends();
+                                renderChatList(); // Update UI
+                            }
                         });
-                    }
+                    });
                 }
             });
         }
 
-
         // Display a single message in the chat window
         function displayMessage(msg, isNew) {
-            // Don't show messages deleted for me
+             if (!msg || !msg.id || !msg.senderId || !msg.timestamp || !myClientId) {
+                 console.warn("Skipping invalid message or client not ready:", msg);
+                 return;
+             }
+
             if (msg.deletedFor && msg.deletedFor[myClientId]) {
+                const existingElement = document.getElementById(msg.id);
+                if (existingElement) existingElement.remove();
                 return;
             }
             
-            // Check if message is already displayed
             if (document.getElementById(msg.id)) {
-                return;
+                 // Update seen status if needed
+                 const msgElement = document.getElementById(msg.id);
+                 const meta = msgElement.querySelector('.message-meta');
+                 const isUser = msg.senderId === myClientId;
+                 if (isUser && msg.seenBy && msg.seenBy[currentFriendId] && meta && !meta.textContent.includes('Seen')) {
+                     meta.textContent += ' ✓ Seen';
+                 }
+                return; // Don't re-render
             }
             
             const isUser = msg.senderId === myClientId;
@@ -646,32 +777,37 @@ document.addEventListener('DOMContentLoaded', () => {
             container.className = isUser ? 'message-container user-prompt' : 'message-container bot-response';
             
             const bubble = document.createElement('div');
-bubble.className = 'message-bubble';
+            bubble.className = 'message-bubble';
             
             let messageText = '';
             let isLockedForMe = false;
 
             if (isUser && msg.type === 'locked') {
-                // It's my own locked message. Try to get it from local storage.
                 const lockedMsg = getLockedMessage(msg.id);
                 if (lockedMsg) {
-                    messageText = '🔒 ' + lockedMsg.encryptedText.substring(0, 15) + '...'; // Show encrypted text
+                    messageText = '🔒 Tap to unlock...'; 
+                    bubble.dataset.encrypted = lockedMsg.encryptedText; 
                     isLockedForMe = true;
                 } else {
                     messageText = '🔒 Locked Message (content lost)';
                 }
             } else {
-                // It's a friend's message or my own unlocked message
-                messageText = msg.text;
+                messageText = msg.text || ""; 
             }
             
             bubble.textContent = messageText;
 
-            // Add meta info (timestamp and seen status)
             const meta = document.createElement('div');
             meta.className = 'message-meta';
-            let metaText = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            try {
+                 const timestamp = Number(msg.timestamp);
+                 if (isNaN(timestamp)) throw new Error("Invalid timestamp");
+                metaText = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                 metaText = "--:--"; 
+            }
             
+            // Append Seen status CORRECTLY
             if (isUser && msg.seenBy && msg.seenBy[currentFriendId]) {
                 metaText += ' ✓ Seen';
             }
@@ -681,45 +817,27 @@ bubble.className = 'message-bubble';
             container.appendChild(bubble);
             container.appendChild(meta);
             
-            // Add to top (because of column-reverse)
-            messageList.insertBefore(container, messageList.firstChild); 
+            // **MESSAGE ORDER FIX:** Append to the END of messageList
+            messageList.appendChild(container); 
 
-            // Scroll to bottom
-            chatWindow.scrollTop = 0; // 0 is bottom because of column-reverse
-            // --- Event Listeners for the Bubble ---
+            // **SCROLL FIX:** Scroll to the bottom (scrollHeight)
+            chatWindow.scrollTop = chatWindow.scrollHeight;
             
-            // 1. Click (Tap) listener (for unlocking)
+            // --- Event Listeners ---
+            
+            // 1. Click (Tap) listener (for unlocking) - FIX
             if (isLockedForMe) {
                 bubble.style.cursor = 'pointer';
-                bubble.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Stop click from bubbling to document
-                    const lockedMsg = getLockedMessage(msg.id);
-                    if (!lockedMsg) return;
-                    
-                    showModal({
-                        title: "Unlock Message",
-                        text: "Enter password to decrypt this message.",
-                        password: "",
-                        primaryButton: "Unlock",
-                        secondaryButton: "Cancel"
-                    }, (result) => {
-                        if (result.primary && result.password) {
-                            try {
-                                const decrypted = decryptText(lockedMsg.encryptedText, result.password);
-                                bubble.textContent = decrypted; // Show decrypted text
-                            } catch (e) {
-                                alert("Incorrect password.");
-                            }
-                        }
-                    });
-                });
+                // Remove previous listener if any (important for re-renders)
+                // bubble.removeEventListener('click', handleUnlockClick); 
+                bubble.addEventListener('click', handleUnlockClick); // Use named function
             }
             
-            // 2. Context Menu (Long Press) listener (for deleting)
+            // 2. Context Menu (Long Press) listener (for deleting) - FIX
             bubble.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-                e.stopPropagation(); // Stop event from bubbling
-                contextMsgId = msg.id;
+                e.preventDefault(); // Prevent default browser menu
+                e.stopPropagation(); // Stop event from bubbling up
+                contextMsgId = msg.id; // Store ID for delete actions
                 
                 // Show delete options
                 contextDeleteMe.style.display = 'block';
@@ -730,37 +848,131 @@ bubble.className = 'message-bubble';
                     contextDeleteEveryone.style.display = 'none';
                 }
                 
+                // Position and show menu
                 contextMenu.style.top = `${e.clientY}px`;
                 contextMenu.style.left = `${e.clientX}px`;
                 contextMenu.style.display = 'block';
+                 
+                 // Hide other context menu
+                 chatListContextMenu.style.display = 'none'; 
             });
 
-            // Mark message as seen
+            // Mark message as seen by me
             if (!isUser && (!msg.seenBy || !msg.seenBy[myClientId])) {
                 markMessageAsSeen(msg.id);
             }
         }
         
-        // Mark a message as seen
-        function markMessageAsSeen(msgId) {
-            const seenRef = db.ref(`messages/${currentChatId}/${msgId}/seenBy/${myClientId}`);
-            seenRef.set(true);
-        }
+         // Named function for unlocking to allow removal if needed
+         function handleUnlockClick(e) {
+             const bubble = e.currentTarget; // Get the bubble that was clicked
+             const encryptedText = bubble.dataset.encrypted;
+             if (!encryptedText) {
+                 bubble.textContent = '🔒 Locked Message (content lost)';
+                 return;
+             }
+             // Don't re-prompt if already unlocked
+             if (bubble.dataset.unlocked === "true") return; 
+
+             showModal({
+                 title: "Unlock Message",
+                 text: "Enter password to decrypt this message.",
+                 password: "", // Show password field
+                 primaryButton: "Unlock",
+                 secondaryButton: "Cancel"
+             }, (result) => {
+                 if (result.primary && result.password) {
+                     try {
+                         const decrypted = decryptText(encryptedText, result.password);
+                         bubble.textContent = decrypted;
+                         bubble.style.cursor = 'default';
+                         bubble.dataset.unlocked = "true"; // Mark as unlocked
+                     } catch (e) {
+                          console.error("Decryption error:", e);
+                         alert("Incorrect password.");
+                     }
+                 }
+             });
+         }
         
-        // Snapchat Logic: Check for seen messages on load
-        function cleanupSeenMessages() {
-            const messagesRef = db.ref(`messages/${currentChatId}`);
-            messagesRef.orderByChild(`seenBy/${myClientId}`).equalTo(true).once('value', (snapshot) => {
-                snapshot.forEach((child) => {
-                    // This message was seen by me. Delete it FOR ME.
-                    const msgId = child.key;
-                    const deletedForRef = db.ref(`messages/${currentChatId}/${msgId}/deletedFor/${myClientId}`);
-                    deletedForRef.set(true);
-                });
-            });
+        // Mark a message as seen and update unread count immediately
+        function markMessageAsSeen(msgId) {
+             if (!currentChatId || !myClientId || !currentFriendId) return;
+            const seenRef = db.ref(`messages/${currentChatId}/${msgId}/seenBy/${myClientId}`);
+            seenRef.set(true)
+                 .then(() => {
+                      console.log("Marked as seen:", msgId);
+                      // **NOTIFICATION BADGE FIX:** Update count immediately
+                      updateUnreadCount(currentFriendId); 
+                 })
+                 .catch(e => console.error("Error marking message as seen:", e));
         }
 
-        // --- Message Sending ---
+         // Function to explicitly update unread count
+         function updateUnreadCount(friendId) {
+             if (!friendId) return;
+             const chatId = getChatId(friendId);
+             if (!chatId) return;
+             const messagesRef = db.ref(`messages/${chatId}`);
+             // Use once() for a single update, not a persistent listener here
+             messagesRef.once('value', (snapshot) => { 
+                 let unreadCount = 0;
+                 snapshot.forEach((child) => {
+                     const msg = child.val();
+                     if (msg && msg.senderId !== myClientId &&
+                         (!msg.seenBy || !msg.seenBy[myClientId]) &&
+                         (!msg.deletedFor || !msg.deletedFor[myClientId])) {
+                         unreadCount++;
+                     }
+                 });
+                 const badgeEl = document.getElementById(`unread_${friendId}`);
+                 if (badgeEl) {
+                     if (unreadCount > 0) {
+                         badgeEl.textContent = unreadCount > 9 ? '9+' : unreadCount;
+                         badgeEl.style.display = 'block';
+                     } else {
+                         badgeEl.style.display = 'none';
+                     }
+                 }
+             });
+         }
+        
+        // **SEEN MESSAGE DELETION FIX (Database Deletion)**
+        function cleanupSeenMessages() {
+             if (!currentChatId || !myClientId || isProcessingCleanup) return;
+             console.log("Running cleanup for seen messages in chat:", currentChatId);
+             isProcessingCleanup = true; 
+
+            const messagesRef = db.ref(`messages/${currentChatId}`);
+            // Find messages seen by the current user
+            messagesRef.orderByChild(`seenBy/${myClientId}`).equalTo(true).once('value', (snapshot) => {
+                 const promises = [];
+                 if (snapshot.exists()) {
+                     snapshot.forEach((child) => {
+                         // Delete this message from the database entirely
+                         console.log("Deleting seen message from DB:", child.key);
+                         promises.push(child.ref.remove()); 
+                     });
+                 }
+                 Promise.all(promises)
+                     .then(() => {
+                         console.log("DB Cleanup complete for:", currentChatId);
+                         isProcessingCleanup = false; 
+                          // Manually clear the UI after successful DB deletion
+                          messageList.innerHTML = ''; 
+                          // Reload remaining messages (optional, or rely on future updates)
+                          // loadMessages(); // Be careful of infinite loops if cleanup runs too often
+                     })
+                     .catch((e) => {
+                         console.error("Error during DB cleanup:", e);
+                         isProcessingCleanup = false; 
+                     });
+            }, (error) => {
+                 console.error("Error fetching messages for cleanup:", error);
+                 isProcessingCleanup = false; 
+            });
+                }
+                                     // --- Message Sending ---
         messageForm.addEventListener('submit', (e) => {
             e.preventDefault();
             sendMessage(false);
@@ -771,25 +983,30 @@ bubble.className = 'message-bubble';
         });
 
         function sendMessage(isLocked) {
+             if (!currentChatId || !myClientId) {
+                 alert("Cannot send message. Connection not ready.");
+                 return;
+             }
             const text = messageInput.value.trim();
             if (text === '') return;
 
             if (isLocked) {
-                // Ask for password to lock
+                // **LOCK MODAL FIX:** Show only password input
                 showModal({
                     title: "Lock Message",
-                    text: "Create a password for this message. Only you will need it to unlock.",
-                    password: "",
-                    placeholder: "Password",
+                    text: "Create a password for this message.",
+                    password: "", // Show password field
+                    passwordPlaceholder: "Password", // Correct placeholder
                     primaryButton: "Lock & Send",
                     secondaryButton: "Cancel"
                 }, (result) => {
                     if (result.primary && result.password) {
                         sendFirebaseMessage(text, true, result.password);
+                    } else if (result.primary && !result.password) {
+                        alert("Password cannot be empty to lock.");
                     }
                 });
             } else {
-                // Send regular unlocked message
                 sendFirebaseMessage(text, false, null);
             }
         }
@@ -799,40 +1016,32 @@ bubble.className = 'message-bubble';
             const newMessageRef = messagesRef.push();
             const msgId = newMessageRef.key;
 
-            let messageData;
+            let messageData = {
+                senderId: myClientId,
+                text: text, 
+                type: isLocked ? 'locked' : 'normal',
+                timestamp: firebase.database.ServerValue.TIMESTAMP,
+                seenBy: null, 
+                deletedFor: null 
+            };
 
             if (isLocked) {
-                // Sender-Side Lock Logic
-                // 1. Encrypt text for local storage
-                const encryptedText = encryptText(text, password);
-                saveLockedMessage(msgId, encryptedText, password);
-                
-                // 2. Send the REAL (unlocked) text to Firebase
-                messageData = {
-                    senderId: myClientId,
-                    text: text, // Send real text
-                    type: 'locked', // Mark as 'locked' so sender's UI can check it
-                    timestamp: firebase.database.ServerValue.TIMESTAMP,
-                    seenBy: null,
-                    deletedFor: null
-                };
-            } else {
-                // Regular message
-                messageData = {
-                    senderId: myClientId,
-                    text: text,
-                    type: 'normal',
-                    timestamp: firebase.database.ServerValue.TIMESTAMP,
-                    seenBy: null,
-                    deletedFor: null
-                };
+                try {
+                    const encryptedText = encryptText(text, password);
+                    saveLockedMessage(msgId, encryptedText); 
+                } catch (e) {
+                     console.error("Encryption failed:", e);
+                     alert("Could not lock message. Sending unlocked.");
+                     messageData.type = 'normal'; 
+                }
             }
 
             newMessageRef.set(messageData)
                 .then(() => {
-                    // Message sent
                     messageInput.value = '';
-                    messageInput.style.height = 'auto'; // Reset height
+                    messageInput.style.height = 'auto'; 
+                    // Scroll to bottom after sending
+                    chatWindow.scrollTop = chatWindow.scrollHeight; 
                 })
                 .catch((error) => {
                     console.error('Error sending message: ', error);
@@ -842,29 +1051,38 @@ bubble.className = 'message-bubble';
         
         // --- Message Deletion ---
         contextDeleteMe.addEventListener('click', () => {
-            if (!contextMsgId) return;
-            // Delete just for me
+            if (!contextMsgId || !currentChatId || !myClientId) return;
             const deletedForRef = db.ref(`messages/${currentChatId}/${contextMsgId}/deletedFor/${myClientId}`);
-            deletedForRef.set(true);
+            deletedForRef.set(true).then(() => {
+                 const msgElement = document.getElementById(contextMsgId);
+                 if (msgElement) msgElement.remove();
+                 updateChatListPreview(currentFriendId); 
+            });
             contextMenu.style.display = 'none';
         });
         
         contextDeleteEveryone.addEventListener('click', () => {
-            if (!contextMsgId) return;
-            // Delete from database (for everyone)
-            db.ref(`messages/${currentChatId}/${contextMsgId}`).remove();
+            if (!contextMsgId || !currentChatId) return;
+            db.ref(`messages/${currentChatId}/${contextMsgId}`).remove().then(() => {
+                 updateChatListPreview(currentFriendId); 
+            });
             contextMenu.style.display = 'none';
         });
         
-        // Hide context menu on click outside
+        // Hide context menu on click outside - FIX
         document.addEventListener('click', (e) => {
-            contextMenu.style.display = 'none';
-            chatListContextMenu.style.display = 'none';
+            // Check if the click target is NOT the context menu or a child of it
+            if (contextMenu && !contextMenu.contains(e.target)) {
+                 contextMenu.style.display = 'none';
+            }
+             if (chatListContextMenu && !chatListContextMenu.contains(e.target)) {
+                 chatListContextMenu.style.display = 'none';
+             }
         });
 
 
         // =======================================
-        // 5. MODAL (POP-UP) HELPER
+        // 5. MODAL (POP-UP) HELPER - FIX FOR LOCK
         // =======================================
         
         let modalCallback = null;
@@ -873,14 +1091,24 @@ bubble.className = 'message-bubble';
             modalTitle.textContent = options.title || "Confirmation";
             modalText.textContent = options.text || "";
             
-            modalInputText.value = options.inputText || "";
-            modalInputText.placeholder = options.placeholder || "";
-            modalInputText.style.display = options.inputText !== undefined || options.placeholder ? 'block' : 'none';
-            modalInputText.readOnly = options.readOnly || false;
+            // Text Input
+            if (options.inputText !== undefined) {
+                 modalInputText.value = options.inputText;
+                 modalInputText.placeholder = options.placeholder || "";
+                 modalInputText.style.display = 'block';
+                 modalInputText.readOnly = options.readOnly || false;
+            } else {
+                 modalInputText.style.display = 'none';
+            }
             
-            modalInputPassword.value = options.password || "";
-            modalInputPassword.placeholder = options.passwordPlaceholder || "Password";
-            modalInputPassword.style.display = options.password !== undefined ? 'block' : 'none';
+            // Password Input - Show only if explicitly requested
+            if (options.password !== undefined) { 
+                 modalInputPassword.value = ""; 
+                 modalInputPassword.placeholder = options.passwordPlaceholder || "Password";
+                 modalInputPassword.style.display = 'block';
+            } else {
+                 modalInputPassword.style.display = 'none';
+            }
 
             modalButtonPrimary.textContent = options.primaryButton || "OK";
             modalButtonSecondary.textContent = options.secondaryButton || "Cancel";
@@ -894,10 +1122,12 @@ bubble.className = 'message-bubble';
             if (modalCallback) {
                 modalCallback({
                     primary: true,
-                    inputText: modalInputText.value,
-                    password: modalInputPassword.value
+                    inputText: modalInputText.style.display !== 'none' ? modalInputText.value : undefined,
+                    password: modalInputPassword.style.display !== 'none' ? modalInputPassword.value : undefined
                 });
             }
+            modalInputText.value = "";
+            modalInputPassword.value = "";
         });
         
         modalButtonSecondary.addEventListener('click', () => {
@@ -905,6 +1135,8 @@ bubble.className = 'message-bubble';
             if (modalCallback) {
                 modalCallback({ primary: false });
             }
+             modalInputText.value = "";
+             modalInputPassword.value = "";
         });
 
 
@@ -913,23 +1145,27 @@ bubble.className = 'message-bubble';
         // =======================================
         
         function encryptText(text, password) {
+             if (!text || !password) throw new Error("Text and password required for encryption");
             return CryptoJS.AES.encrypt(text, password).toString();
         }
         
         function decryptText(encryptedText, password) {
+             if (!encryptedText || !password) throw new Error("Encrypted text and password required for decryption");
             const bytes = CryptoJS.AES.decrypt(encryptedText, password);
             const originalText = bytes.toString(CryptoJS.enc.Utf8);
-            if (!originalText) {
-                throw new Error("Decryption failed");
+            if (!originalText) { 
+                throw new Error("Decryption failed - likely wrong password");
             }
             return originalText;
         }
         
-        // Save/Get locked messages from local storage
-        function saveLockedMessage(msgId, encryptedText, password) {
-            // We just save the encrypted text. We don't save the password.
+        function saveLockedMessage(msgId, encryptedText) {
             let lockedMessages = JSON.parse(localStorage.getItem('myLockedMessages')) || {};
             lockedMessages[msgId] = { encryptedText };
+             const keys = Object.keys(lockedMessages);
+             if (keys.length > 50) {
+                 delete lockedMessages[keys[0]]; 
+             }
             localStorage.setItem('myLockedMessages', JSON.stringify(lockedMessages));
         }
         
@@ -938,36 +1174,38 @@ bubble.className = 'message-bubble';
             return lockedMessages[msgId];
         }
         
-// =======================================
-        // 7. WebRTC (CALLING) LOGIC
+        
+        // =======================================
+        // 7. WebRTC (CALLING) LOGIC - (No changes needed for current bugs)
         // =======================================
         
-        // Firebase STUN servers (Google's public servers)
-        const pcConfig = {
-            'iceServers': [
+        const pcConfig = { /* ... Stays the same ... */ 
+             'iceServers': [
                 { 'urls': 'stun:stun.l.google.com:19302' },
                 { 'urls': 'stun:stun1.l.google.com:19302' },
             ]
         };
         
-        let currentCallId = null;
-        let currentCallType = null;
-        let currentCallFriendId = null;
-        
-        // --- Making a Call ---
-        voiceCallBtn.addEventListener('click', () => startCall('voice'));
-        videoCallBtn.addEventListener('click', () => startCall('video'));
+        // --- All WebRTC functions (startCall, acceptCall, declineCall, etc.) stay the same ---
+        // --- We will fix audio/video bugs in the next step ---
+         async function startCall(type) {
+             if (!currentFriendId || !myClientId) {
+                 alert("Cannot start call. Connection not ready.");
+                 return;
+             }
+             if (currentCallId) {
+                 alert("You are already in a call or calling.");
+                 return;
+             }
+             console.log(`Starting ${type} call to ${currentFriendId}`);
+             currentCallType = type;
+             currentCallFriendId = currentFriendId; 
+            
+             const callPushRef = db.ref(`calls/${currentFriendId}`).push();
+             currentCallId = callPushRef.key;
+             console.log("Generated Call ID:", currentCallId);
 
-        async function startCall(type) {
-            if (!currentFriendId) return;
-            console.log(`Starting ${type} call to ${currentFriendId}`);
-            currentCallType = type;
-            currentCallFriendId = currentFriendId;
-            
-            const callRef = db.ref(`calls/${currentFriendId}`).push();
-            currentCallId = callRef.key;
-            
-            // 1. Get local media (audio/video)
+            // 1. Get local media 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({
                     video: type === 'video',
@@ -978,91 +1216,122 @@ bubble.className = 'message-bubble';
             } catch (e) {
                 console.error("Error getting user media:", e);
                 alert("Could not start call. Check camera/mic permissions.");
+                 if(currentCallId) {
+                     db.ref(`calls/${currentFriendId}/${currentCallId}`).remove();
+                     currentCallId = null;
+                 }
                 return;
             }
             
             // 2. Create RTCPeerConnection
             const pc = createPeerConnection(currentFriendId, currentCallId, type);
+             if (!pc) { 
+                 hangUp(false);
+                 return;
+             }
             rtpcConnections[currentCallId] = pc;
             
             // 3. Add local tracks to PC
             localStream.getTracks().forEach(track => {
-                pc.addTrack(track, localStream);
+                 try {
+                     pc.addTrack(track, localStream);
+                 } catch (e) {
+                      console.error("Error adding track:", e);
+                 }
             });
             
-            // 4. Create Offer and set as local description
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            
-            // 5. Send Offer to friend via Firebase
-            const callData = {
-                from: myClientId,
-                to: currentFriendId,
-                type: type,
-                offer: {
-                    type: offer.type,
-                    sdp: offer.sdp
-                }
-            };
-            await callRef.set(callData);
-            
-            // 6. Listen for Answer from friend
-            callRef.on('value', async (snapshot) => {
-                const data = snapshot.val();
-                // Check for answer
-                if (data && data.answer && !pc.currentRemoteDescription) {
-                    console.log("Got answer");
-                    const answer = new RTCSessionDescription(data.answer);
-                    await pc.setRemoteDescription(answer);
-                    startCallTimer();
-                }
-                // Check if friend declined
-                if (data && data.declined) {
-                    alert("Call declined.");
-                    hangUp(false);
-                    snapshot.ref.remove();
-                }
-                // Check if friend hung up
-                if (data && data.hungup) {
-                    hangUp(false);
-                    snapshot.ref.remove();
-                }
-            });
-            
-            // 7. Listen for ICE candidates from friend
-            db.ref(`iceCandidates/${currentFriendId}/${currentCallId}`).on('child_added', (snapshot) => {
-                if (snapshot.exists()) {
-                    pc.addIceCandidate(new RTCIceCandidate(snapshot.val()));
-                    snapshot.ref.remove(); // Remove candidate after adding
-                }
-            });
-        }
+            // 4. Create Offer
+            try {
+                 const offer = await pc.createOffer();
+                 await pc.setLocalDescription(offer);
+                 
+                 // 5. Send Offer to friend via Firebase
+                 const callData = {
+                     from: myClientId,
+                     to: currentFriendId,
+                     type: type,
+                     offer: { type: offer.type, sdp: offer.sdp }
+                 };
+                 await callPushRef.set(callData); 
 
-        // --- Receiving a Call ---
-        function showIncomingCallAlert(type, friendName, friendId, callId) {
-            // Don't show if already in a call
+                 // 6. Listen for Answer/Decline/Hangup from friend on THEIR call node
+                 const friendCallRef = db.ref(`calls/${myClientId}/${currentCallId}`); 
+                 friendCallRef.on('value', async (snapshot) => {
+                      // Check if PC still exists for this call ID
+                     const currentPC = rtpcConnections[currentCallId];
+                     if (!currentPC) return; // Ignore updates if call ended locally
+
+                     const data = snapshot.val();
+                     if (!data) return; 
+
+                     // Check for answer
+                     if (data.answer && !currentPC.currentRemoteDescription) {
+                         console.log("Got answer");
+                         const answer = new RTCSessionDescription(data.answer);
+                          try {
+                              await currentPC.setRemoteDescription(answer);
+                              startCallTimer();
+                          } catch (e) {
+                              console.error("Error setting remote description (answer):", e);
+                              hangUp(true); // Hangup if setting answer fails
+                          }
+                     }
+                     // Check if friend declined
+                     if (data.declined) {
+                         console.log("Call declined by friend");
+                         alert("Call declined.");
+                         hangUp(false); 
+                         snapshot.ref.remove(); 
+                     }
+                     // Check if friend hung up
+                     if (data.hungup) {
+                         console.log("Call hung up by friend");
+                         hangUp(false); 
+                         snapshot.ref.remove(); 
+                     }
+                 });
+
+                 // 7. Listen for ICE candidates from friend
+                 const friendIceCandidateRef = db.ref(`iceCandidates/${myClientId}/${currentCallId}`);
+                 friendIceCandidateRef.on('child_added', (snapshot) => {
+                     const currentPC = rtpcConnections[currentCallId];
+                     if (snapshot.exists() && currentPC && currentPC.signalingState !== 'closed') {
+                         console.log("Received remote ICE candidate");
+                         currentPC.addIceCandidate(new RTCIceCandidate(snapshot.val()))
+                           .catch(e => console.error("Error adding remote ICE candidate:", e));
+                         snapshot.ref.remove(); 
+                     }
+                 });
+
+            } catch (e) {
+                console.error("Error creating/sending offer:", e);
+                alert("Could not initiate call.");
+                hangUp(false); 
+            }
+        }
+         function showIncomingCallAlert(type, friendName, friendId, callId) {
             if (currentCallId) {
-                // Busy, auto-decline
+                console.log("Already in a call, declining incoming call:", callId);
                 db.ref(`calls/${myClientId}/${callId}`).update({ declined: true });
-                db.ref(`calls/${myClientId}/${callId}`).remove();
+                setTimeout(() => db.ref(`calls/${myClientId}/${callId}`).remove(), 5000); 
                 return;
             }
             
+            console.log(`Incoming ${type} call ${callId} from ${friendId}`);
             currentCallId = callId;
             currentCallType = type;
-            currentCallFriendId = friendId;
+            currentCallFriendId = friendId; 
             
             incomingCallTitle.textContent = `Incoming ${type} call...`;
             incomingCallFrom.textContent = `from ${friendName}`;
             incomingCallAlert.style.display = 'block';
             
-            acceptCallBtn.onclick = () => acceptCall();
-            declineCallBtn.onclick = () => declineCall();
+            acceptCallBtn.onclick = acceptCall; 
+            declineCallBtn.onclick = declineCall; 
         }
-        
-        async function acceptCall() {
+         async function acceptCall() {
             if (!currentCallId || !currentCallFriendId || !currentCallType) return;
-            console.log(`Accepting ${currentCallType} call from ${currentCallFriendId}`);
+            console.log(`Accepting ${currentCallType} call ${currentCallId} from ${currentCallFriendId}`);
             incomingCallAlert.style.display = 'none';
             
             const callRef = db.ref(`calls/${myClientId}/${currentCallId}`);
@@ -1073,132 +1342,204 @@ bubble.className = 'message-bubble';
                     video: currentCallType === 'video',
                     audio: true
                 });
-                const friendName = friendsList[currentCallFriendId]?.name || currentCallFriendId;
-                showCallingScreen(currentCallType, `On call with ${friendName}...`);
+                const friendName = friendsList[currentCallFriendId]?.name || `AI Bot (${currentCallFriendId.substring(0,6)}...)`;
+                showCallingScreen(currentCallType, `Connecting with ${friendName}...`); 
                 attachMediaStream(document.getElementById('local-video'), localStream);
             } catch (e) {
                 console.error("Error getting user media:", e);
                 alert("Could not start call. Check camera/mic permissions.");
+                declineCall(); 
                 return;
             }
             
             // 2. Create PC
             const pc = createPeerConnection(currentCallFriendId, currentCallId, currentCallType);
+             if (!pc) { 
+                 hangUp(false);
+                 return;
+             }
             rtpcConnections[currentCallId] = pc;
             
             // 3. Add local tracks
             localStream.getTracks().forEach(track => {
-                pc.addTrack(track, localStream);
+                 try {
+                    pc.addTrack(track, localStream);
+                 } catch (e) {
+                     console.error("Error adding track:", e);
+                 }
             });
             
             // 4. Set Remote Description (the offer)
-            const callData = (await callRef.once('value')).val();
-            const offer = new RTCSessionDescription(callData.offer);
-            await pc.setRemoteDescription(offer);
-            
-            // 5. Create Answer and set as local description
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            
-            // 6. Send Answer to caller via Firebase
-            await callRef.update({
-                answer: {
-                    type: answer.type,
-                    sdp: answer.sdp
-                }
-            });
-            startCallTimer();
-            
-            // 7. Listen for ICE candidates from caller
-            db.ref(`iceCandidates/${currentCallFriendId}/${currentCallId}`).on('child_added', (snapshot) => {
-                if (snapshot.exists()) {
-                    pc.addIceCandidate(new RTCIceCandidate(snapshot.val()));
-                    snapshot.ref.remove();
-                }
-            });
-            
-            // 8. Listen for hangup
-            callRef.on('value', (snapshot) => {
-                const data = snapshot.val();
-                if (data && data.hungup) {
-                    hangUp(false);
-                    snapshot.ref.remove();
-                }
-            });
-        }
+            try {
+                const callData = (await callRef.once('value')).val();
+                 if (!callData || !callData.offer) throw new Error("Offer not found in call data");
+                const offer = new RTCSessionDescription(callData.offer);
+                await pc.setRemoteDescription(offer);
+                
+                // 5. Create Answer
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                
+                // 6. Send Answer to caller via Firebase (Update *their* call node)
+                const callerCallRef = db.ref(`calls/${currentCallFriendId}/${currentCallId}`);
+                await callerCallRef.update({
+                    answer: { type: answer.type, sdp: answer.sdp }
+                });
+                startCallTimer();
+                
+                // 7. Listen for ICE candidates from caller (on MY node for candidates sent TO me)
+                const callerIceCandidateRef = db.ref(`iceCandidates/${myClientId}/${currentCallId}`);
+                 callerIceCandidateRef.on('child_added', (snapshot) => {
+                     const currentPC = rtpcConnections[currentCallId]; // Check against current call
+                     if (snapshot.exists() && currentPC && currentPC.signalingState !== 'closed') {
+                          console.log("Received remote ICE candidate (caller on accept)");
+                         currentPC.addIceCandidate(new RTCIceCandidate(snapshot.val()))
+                            .catch(e => console.error("Error adding remote ICE candidate:", e));
+                         snapshot.ref.remove();
+                     }
+                 });
 
-        function declineCall() {
-            console.log("Declining call");
+                  // 8. Listen for hangup from caller (on MY node)
+                 callRef.on('value', (snapshot) => {
+                     const data = snapshot.val();
+                     if (data && data.hungup) {
+                         console.log("Call hung up by caller (receiver side)");
+                         hangUp(false); 
+                         snapshot.ref.remove(); 
+                     }
+                 });
+
+            } catch(e) {
+                 console.error("Error accepting call / setting description / sending answer:", e);
+                 alert("Could not connect the call.");
+                 hangUp(false); 
+            }
+        }
+         function declineCall() {
+            console.log("Declining call", currentCallId);
             incomingCallAlert.style.display = 'none';
-            // Notify caller that call was declined
-            db.ref(`calls/${myClientId}/${currentCallId}`).update({ declined: true });
-            db.ref(`calls/${myClientId}/${currentCallId}`).remove();
+            if (currentCallId && currentCallFriendId) {
+                const callerCallRef = db.ref(`calls/${currentCallFriendId}/${currentCallId}`);
+                callerCallRef.update({ declined: true });
+                 // Clean up my node immediately
+                 db.ref(`calls/${myClientId}/${currentCallId}`).remove();
+                 db.ref(`iceCandidates/${myClientId}/${currentCallId}`).remove();
+            }
             currentCallId = null;
             currentCallFriendId = null;
             currentCallType = null;
         }
-        
-        // --- Common Call Functions ---
-        function createPeerConnection(friendId, callId, type) {
-            const pc = new RTCPeerConnection(pcConfig);
-            
-            // Send ICE candidates to friend via Firebase
-            pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    db.ref(`iceCandidates/${friendId}/${callId}`).push(event.candidate.toJSON());
-                }
-            };
-            
-            // When remote stream is added
-            pc.ontrack = (event) => {
-                console.log("Remote track received");
-                if (!remoteStream) {
-                    remoteStream = new MediaStream();
-                }
-                remoteStream.addTrack(event.track);
-                const remoteVideo = document.getElementById('remote-video');
-                attachMediaStream(remoteVideo, remoteStream);
-                if (type === 'voice') remoteVideo.style.display = 'none';
+         function createPeerConnection(friendId, callId, type) {
+            try {
+                 const pc = new RTCPeerConnection(pcConfig);
+                 console.log("RTCPeerConnection created for call:", callId);
                 
-                const friendName = friendsList[friendId]?.name || friendId;
-                callingStatus.textContent = `On call with ${friendName}`;
-            };
-            
-            pc.onconnectionstatechange = (event) => {
-                console.log("PC Connection State:", pc.connectionState);
-                if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-                    hangUp(true); // Send hangup signal
-                }
-            };
-            
-            return pc;
+                 pc.onicecandidate = (event) => {
+                     if (event.candidate && friendId && callId) { // Add checks
+                          console.log("Generated local ICE candidate for", friendId);
+                         db.ref(`iceCandidates/${friendId}/${callId}`).push(event.candidate.toJSON());
+                     }
+                 };
+                
+                 pc.ontrack = (event) => {
+                     console.log("Remote track received:", event.track.kind);
+                     const remoteVideoElement = document.getElementById('remote-video');
+                     if (!remoteStream) {
+                         remoteStream = new MediaStream();
+                     }
+                     
+                     // Check if track is already added
+                     if (!remoteStream.getTracks().includes(event.track)) {
+                         remoteStream.addTrack(event.track);
+                         console.log("Track added to remote stream");
+                     } else {
+                         console.log("Track already exists in remote stream");
+                     }
+                    
+                     // Attach the stream to the video element
+                     attachMediaStream(remoteVideoElement, remoteStream); 
+                    
+                     // Update UI based on type
+                     if (type === 'voice' && remoteVideoElement) {
+                         remoteVideoElement.style.display = 'none';
+                     } else if (remoteVideoElement) {
+                         remoteVideoElement.style.display = 'block';
+                     }
+                    
+                     const friendName = friendsList[friendId]?.name || `AI Bot (${friendId.substring(0,6)}...)`;
+                     if(callingStatus) callingStatus.textContent = `On call with ${friendName}`;
+                 };
+                
+                pc.onconnectionstatechange = (event) => {
+                    console.log("PC Connection State:", pc.connectionState);
+                    if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                         console.warn("PC connection state is problematic, hanging up.");
+                        hangUp(true); 
+                    } else if (pc.connectionState === 'connected') {
+                         console.log("Call connected via PeerConnection!");
+                    }
+                };
+
+                 pc.onsignalingstatechange = () => {
+                     console.log("Signaling State:", pc.signalingState);
+                 };
+
+                 pc.oniceconnectionstatechange = () => {
+                     console.log("ICE Connection State:", pc.iceConnectionState);
+                      if (pc.iceConnectionState === 'failed') {
+                          console.error("ICE connection failed. Attempting ICE restart if configured, otherwise hanging up.");
+                          // Implement ICE restart logic here if desired
+                          hangUp(true); 
+                      } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+                           console.warn("ICE connection disconnected/closed.");
+                           // Hang up might be too aggressive here, maybe wait?
+                           // hangUp(true); 
+                      }
+                 };
+                
+                return pc;
+
+            } catch (e) {
+                 console.error("Failed to create PeerConnection:", e);
+                 alert("Could not create call connection. Browser might not be supported.");
+                 return null;
+            }
         }
-        
-        function showCallingScreen(type, status) {
+         function showCallingScreen(type, status) {
             const remoteVideo = document.getElementById('remote-video');
             const localVideo = document.getElementById('local-video');
             
             if (type === 'voice') {
-                remoteVideo.style.display = 'none';
-                localVideo.style.display = 'none';
+                if(remoteVideo) remoteVideo.style.display = 'none';
+                if(localVideo) localVideo.style.display = 'none';
             } else {
-                remoteVideo.style.display = 'block';
-                localVideo.style.display = 'block';
+                 if(remoteVideo) remoteVideo.style.display = 'block';
+                 if(localVideo) localVideo.style.display = 'block';
             }
             
-            callingStatus.textContent = status;
-            callTimer.textContent = '00:00';
-            hangupButton.onclick = () => hangUp(true); // Send hangup signal
+            if(callingStatus) callingStatus.textContent = status;
+            if(callTimer) callTimer.textContent = '00:00';
+            if(hangupButton) hangupButton.onclick = () => hangUp(true); 
             
-            callingScreen.style.display = 'flex';
+            if(callingScreen) callingScreen.style.display = 'flex';
         }
-        
-        function hangUp(sendSignal = true) {
-            console.log("Hanging up call");
+         function hangUp(sendSignal = true) {
+            console.log("HangUp called. CurrentCallId:", currentCallId, "Send Signal:", sendSignal);
             
+             // Prevent multiple hangup calls
+             if (!currentCallId && !localStream && !remoteStream) {
+                 console.log("Hangup already in progress or completed.");
+                 return;
+             }
+
             // 1. Close PeerConnection
             if (currentCallId && rtpcConnections[currentCallId]) {
-                rtpcConnections[currentCallId].close();
+                 try {
+                     rtpcConnections[currentCallId].close();
+                     console.log("PC closed for call:", currentCallId);
+                 } catch (e) {
+                      console.error("Error closing PC:", e);
+                 }
                 delete rtpcConnections[currentCallId];
             }
             
@@ -1206,68 +1547,87 @@ bubble.className = 'message-bubble';
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
+                 console.log("Local stream stopped");
             }
             if (remoteStream) {
+                // Ensure remote video element srcObject is cleared
+                 const remoteVideoElement = document.getElementById('remote-video');
+                 if(remoteVideoElement) remoteVideoElement.srcObject = null; 
                 remoteStream.getTracks().forEach(track => track.stop());
                 remoteStream = null;
+                 console.log("Remote stream stopped");
             }
             
-            // 3. Send hangup signal to friend
+            // 3. Send hangup signal to friend 
             if (sendSignal && currentCallId && currentCallFriendId) {
-                db.ref(`calls/${currentCallFriendId}/${currentCallId}`).update({ hungup: true });
+                console.log("Sending hangup signal to:", currentCallFriendId);
+                const friendCallRef = db.ref(`calls/${currentCallFriendId}/${currentCallId}`);
+                friendCallRef.update({ hungup: true })
+                  .then(() => setTimeout(() => friendCallRef.remove(), 5000)) 
+                  .catch(e => console.error("Error sending hangup signal:", e));
             }
             
-            // 4. Clean up Firebase (delete call and candidates)
-            if (currentCallId) {
-                // Delete my call entry
+            // 4. Clean up Firebase (delete my call and candidates)
+            if (currentCallId && myClientId) {
+                console.log("Cleaning up Firebase for call:", currentCallId);
                 db.ref(`calls/${myClientId}/${currentCallId}`).remove();
-                
-                // Clean up candidates
                 db.ref(`iceCandidates/${myClientId}/${currentCallId}`).remove();
-                if(currentCallFriendId) {
-                    db.ref(`iceCandidates/${currentCallFriendId}/${currentCallId}`).remove();
-                }
+                 if (currentCallFriendId) {
+                     db.ref(`iceCandidates/${currentCallFriendId}/${currentCallId}`).remove();
+                 }
             }
 
             // 5. Hide calling screen
-            callingScreen.style.display = 'none';
-            incomingCallAlert.style.display = 'none';
-            currentCallId = null;
-            currentCallType = null;
-            currentCallFriendId = null;
-            
+            if(callingScreen) callingScreen.style.display = 'none';
+            if(incomingCallAlert) incomingCallAlert.style.display = 'none'; 
+             console.log("UI hidden");
+
             // 6. Stop timer
             if (callTimerInterval) {
                 clearInterval(callTimerInterval);
                 callTimerInterval = null;
+                 console.log("Timer stopped");
+            }
+            
+             // 7. Reset state VERY IMPORTANT
+            currentCallId = null;
+            currentCallType = null;
+            currentCallFriendId = null; 
+             console.log("Call state reset");
+
+        }
+         function attachMediaStream(element, stream) {
+             if (element && stream) {
+                 try {
+                     if (element.srcObject !== stream) {
+                         element.srcObject = stream;
+                         console.log("Attached stream to element:", element.id);
+                     }
+                 } catch (e) {
+                      console.error("Error attaching stream:", e);
+                 }
+            } else {
+                 // Don't warn if stream is intentionally null (e.g., after hangup)
+                 if (stream) {
+                      console.warn("Cannot attach stream: Element missing", element);
+                 }
             }
         }
-        
-        // Helper to attach stream
-        function attachMediaStream(element, stream) {
-            if (element) {
-                element.srcObject = stream;
-            }
-        }
-        
-        // Call Timer
-        function startCallTimer() {
-            if (callTimerInterval) clearInterval(callTimerInterval);
+         function startCallTimer() {
+            if (callTimerInterval) clearInterval(callTimerInterval); 
             let seconds = 0;
-            callTimer.textContent = '00:00';
+            if(callTimer) callTimer.textContent = '00:00';
             callTimerInterval = setInterval(() => {
                 seconds++;
                 const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
                 const secs = (seconds % 60).toString().padStart(2, '0');
-                callTimer.textContent = `${mins}:${secs}`;
+                 if(callTimer) callTimer.textContent = `${mins}:${secs}`;
             }, 1000);
         }
 
     } catch (error) {
         console.error("Firebase Initialization Error:", error);
         alert("CRITICAL ERROR: Could not connect to services. App will not work.");
-        document.body.innerHTML = "Error loading app. Please check console.";
+        document.body.innerHTML = `<div style="padding: 20px; text-align: center;"><h1>App Initialization Failed</h1><p>Could not initialize Firebase. Please check your Firebase configuration and network connection.</p><p>Error: ${error.message}</p></div>`;
     }
 }); // End of DOMContentLoaded
-        
-                            
