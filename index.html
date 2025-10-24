@@ -8,8 +8,9 @@
     <!-- Link to our new CSS file -->
     <link rel="stylesheet" href="style.css">
     
-    <!-- Firebase Libraries -->
+    <!-- Firebase Libraries (Saari zaroori libraries) -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script> <!-- YEH MISSING THA -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
     
     <!-- Crypto.js Library (Sender-Side Lock) -->
@@ -17,15 +18,10 @@
 </head>
 <body>
 
-    <!-- 
-    App container holds all screens. 
-    We will move this container left/right to show different screens.
-    -->
+    <!-- App container holds all screens -->
     <div id="app-container">
 
-        <!-- ======================================= -->
-        <!-- SCREEN 1: PASSWORD LOCK (DEFAULT)     -->
-        <!-- ======================================= -->
+        <!-- SCREEN 1: PASSWORD LOCK (DEFAULT) -->
         <div id="password-screen" class="screen">
             <div class="header">
                 <div class="header-title">
@@ -40,9 +36,7 @@
             </form>
         </div>
 
-        <!-- ======================================= -->
-        <!-- SCREEN 2: CHAT LIST (FRIENDS)         -->
-        <!-- ======================================= -->
+        <!-- SCREEN 2: CHAT LIST (FRIENDS) -->
         <div id="chat-list-screen" class="screen">
             <div class="header">
                 <div class="header-title">
@@ -58,9 +52,7 @@
             </div>
         </div>
 
-        <!-- ======================================= -->
-        <!-- SCREEN 3: CHAT ROOM (MESSAGES)        -->
-        <!-- ======================================= -->
+        <!-- SCREEN 3: CHAT ROOM (MESSAGES) -->
         <div id="chat-room-screen" class="screen">
             <div class="header">
                 <button id="back-to-list-btn">←</button>
@@ -87,9 +79,7 @@
 
     </div>
     
-    <!-- ======================================= -->
-    <!-- OVERLAYS (MODALS, MENUS, CALLING)     -->
-    <!-- ======================================= -->
+    <!-- OVERLAYS (MODALS, MENUS, CALLING) -->
 
     <!-- Modal for adding friend, setting passwords, etc. -->
     <div id="modal" class="modal">
@@ -131,8 +121,10 @@
     
     <!-- Full-screen Calling UI -->
     <div id="calling-screen">
-        <video id="remote-video" autoplay playsinline></video>
-        <video id="local-video" autoplay muted playsinline></video>
+        <div id="video-container">
+            <video id="remote-video" autoplay playsinline></video>
+            <video id="local-video" autoplay muted playsinline></video>
+        </div>
         
         <div id="call-info-container">
             <h2 id="calling-status">Connecting...</h2>
@@ -146,6 +138,6 @@
 
     <!-- Link to our new JavaScript file -->
     <script src="script.js"></script>
-
+    
 </body>
 </html>
