@@ -31,6 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
         let callTimerInterval; let currentCallId = null; let currentCallType = null;
         let currentCallFriendId = null; let isProcessingCleanup = false;
         let currentScreen = 'password-screen';
+        let longPressTimer = null; // Timer for long press detection
+        const LONG_PRESS_DURATION = 500; // milliseconds for long press
 
         // --- DOM Elements ---
         const passwordScreen = document.getElementById('password-screen');
@@ -70,23 +72,26 @@ document.addEventListener('DOMContentLoaded', () => {
         const modalButtonPrimary = document.getElementById('modal-button-primary');
         const modalButtonSecondary = document.getElementById('modal-button-secondary');
         const contextMenu = document.getElementById('context-menu');
-        const contextDeleteMe = document.getElementById('context-delete-me');
-        const contextDeleteEveryone = document.getElementById('context-delete-everyone');
         const chatListContextMenu = document.getElementById('chat-list-context-menu');
         let contextMsgId = null; let contextFriendId = null;
 
-        const contextRelockMsg = document.createElement('button');
-        contextRelockMsg.id = 'context-relock'; contextRelockMsg.textContent = 'Re-lock Message';
-        const contextRemoveLock = document.createElement('button');
-        contextRemoveLock.id = 'context-remove-lock-msg'; contextRemoveLock.textContent = 'Remove Lock';
-        const contextAddLock = document.createElement('button');
-        contextAddLock.id = 'context-add-lock-msg'; contextAddLock.textContent = 'Lock This Message';
+        // Calling buttons
+        const toggleMuteBtn = document.getElementById('toggle-mute-btn');
+        const toggleSpeakerBtn = document.getElementById('toggle-speaker-btn');
+        const toggleVideoBtn = document.getElementById('toggle-video-btn');
+        const swapVideoBtn = document.getElementById('swap-video-btn');
 
+
+        // Dynamic context menu items
+        const contextRelockMsg = document.createElement('button'); contextRelockMsg.id = 'context-relock'; contextRelockMsg.textContent = 'Re-lock Message';
+        const contextRemoveLock = document.createElement('button'); contextRemoveLock.id = 'context-remove-lock-msg'; contextRemoveLock.textContent = 'Remove Lock';
+        const contextAddLock = document.createElement('button'); contextAddLock.id = 'context-add-lock-msg'; contextAddLock.textContent = 'Lock This Message';
+        const contextDeleteMe = document.createElement('button'); contextDeleteMe.id = 'context-delete-me'; contextDeleteMe.textContent = 'Delete for Me';
+        const contextDeleteEveryone = document.createElement('button'); contextDeleteEveryone.id = 'context-delete-everyone'; contextDeleteEveryone.textContent = 'Delete for Everyone'; contextDeleteEveryone.className = 'delete-danger';
 
         // =======================================
         // 1. APP INITIALIZATION & LOGIN
         // =======================================
-        // (Remains Same)
         function getClientId(uid) { myClientId=localStorage.getItem('mySecretClientId')||uid; localStorage.setItem('mySecretClientId', myClientId); return myClientId; }
         function loadFriends() { const s=localStorage.getItem('mySecretFriends'); try{friendsList=s?JSON.parse(s):{};}catch(e){friendsList={};} renderChatList(); }
         function saveFriends() { localStorage.setItem('mySecretFriends', JSON.stringify(friendsList)); }
@@ -98,110 +103,95 @@ document.addEventListener('DOMContentLoaded', () => {
         // =======================================
         // 2. NAVIGATION & BACK BUTTON - **FIXED LOGIC**
         // =======================================
-        function navigateTo(screenId, isBack = false) { // Added isBack flag
-             console.log("Navigating to:", screenId, "IsBack:", isBack);
+        function navigateTo(screenId, isBack = false) {
+             console.log("Nav to:", screenId, "IsBack:", isBack);
              if (passwordScreen && chatListScreen && chatRoomScreen) {
                  // Only push state if it's a forward navigation
                  if (!isBack && screenId !== currentScreen) {
                      history.pushState({ screen: screenId }, '', `#${screenId}`);
+                     console.log("Pushed state:", screenId);
                  }
                  currentScreen = screenId;
                  passwordScreen.style.transform=(screenId==='password-screen')?'translateX(0%)':'translateX(-100%)';
                  chatListScreen.style.transform=(screenId==='chat-list-screen')?'translateX(0%)':(screenId==='password-screen'?'translateX(100%)':'translateX(-100%)');
                  chatRoomScreen.style.transform=(screenId==='chat-room-screen')?'translateX(0%)':'translateX(100%)';
-
-                 // Cleanup listeners when leaving chat room (forward or back)
-                 if(screenId !== 'chat-room-screen'){
-                      if(currentChatId && messageListeners[currentChatId]){ messageListeners[currentChatId].off(); delete messageListeners[currentChatId]; }
-                      if(currentFriendId && presenceRef){ presenceRef.child(currentFriendId).off(); }
-                      currentChatId=null; currentFriendId=null; currentFriendName=null;
-                 }
-             } else { console.error("Nav error: Screens missing."); }
+                 if(screenId !== 'chat-room-screen'){ if(currentChatId&&messageListeners[currentChatId]){messageListeners[currentChatId].off(); delete messageListeners[currentChatId];} if(currentFriendId&&presenceRef){presenceRef.child(currentFriendId).off();} currentChatId=null; currentFriendId=null; currentFriendName=null; }
+             }
         }
-
-        // Back button functionality (uses navigateTo)
-        backToListBtn.addEventListener('click', () => {
-            // Simulate back navigation to update history correctly
-            history.back();
-            // navigateTo('chat-list-screen'); // Let popstate handle it
-        });
-
-        // Handle browser/mobile back button - **SIMPLIFIED LOGIC**
+        backToListBtn.addEventListener('click', () => { history.back(); }); // Use history back
         function setupBackButtonListener() {
              window.addEventListener('popstate', (e) => {
-                  console.log("Popstate event:", e.state, "Current Screen:", currentScreen);
-                 // Determine where we *should* be based on history state or current view
-                 const targetScreen = e.state?.screen;
-
-                 if (targetScreen) {
-                      // Navigate to the screen indicated by the history state
-                      navigateTo(targetScreen, true); // true indicates it's a back navigation
-                 } else {
-                      // If there's no state, it usually means we've gone back past the app's entry point
-                      // Let the browser handle this (exit app or go to previous website)
-                      // Or force back to password screen if needed:
-                      // if (currentScreen !== 'password-screen') {
-                      //    navigateTo('password-screen', true);
-                      // }
+                  const targetScreen = e.state?.screen;
+                  console.log("Popstate:", targetScreen, "Current:", currentScreen);
+                 // If the target screen is different from the current one, navigate
+                 if (targetScreen && targetScreen !== currentScreen) {
+                     navigateTo(targetScreen, true); // Navigate back
+                 } else if (!targetScreen && currentScreen !== 'password-screen') {
+                     // If no state and not on password screen, go to chat list as a fallback
+                     // This might happen if user manually changes URL hash
+                     // navigateTo('chat-list-screen', true);
+                     // Or simply allow browser default (exit/previous page)
                  }
              });
-             // Set initial state
+             // Ensure initial state matches the view
              history.replaceState({ screen: currentScreen }, '', `#${currentScreen}`);
         }
-        messageInput.addEventListener('input', () => { /* ... auto resize ... */ messageInput.style.height='auto'; const sh=messageInput.scrollHeight; const mh=100; messageInput.style.height=Math.min(sh,mh)+'px'; });
-        messageInput.addEventListener('focus', () => { /* ... scroll into view ... */ setTimeout(()=>{messageForm.scrollIntoView({behavior:'smooth', block:'end'});}, 300); });
+        messageInput.addEventListener('input', () => { messageInput.style.height='auto'; const sh=messageInput.scrollHeight; const mh=100; messageInput.style.height=Math.min(sh,mh)+'px'; });
+        messageInput.addEventListener('focus', () => { setTimeout(()=>{messageForm.scrollIntoView({behavior:'smooth', block:'end'});}, 300); });
 
         // =======================================
-        // 3. CHAT LIST LOGIC (FRIENDS) - CHECKED
+        // 3. CHAT LIST LOGIC (FRIENDS) - **TOUCH FIX**
         // =======================================
-        // (All functions remain the same)
-         myIdButton.addEventListener('click', () => { if(!myClientId) return; showModal({ title: "My ID", text: "Share.", inputText: myClientId, readOnly: true, primaryButton: "Copy", secondaryButton: "Close" }, (r)=>{ if(r.primary){ try { navigator.clipboard.writeText(myClientId).then(()=>{alert("Copied!");}).catch(()=>{modalInputText.select(); document.execCommand('copy'); alert("Copied!");}); } catch (e){ modalInputText.select(); document.execCommand('copy'); alert("Copied!"); } } }); });
-         addFriendButton.addEventListener('click', () => { if(!myClientId) return; showModal({ title: "Add Bot", text: "Enter ID.", inputText: "", placeholder: "Friend's ID", primaryButton: "Add", secondaryButton: "Cancel" }, (r)=>{ if(r.primary&&r.inputText){ const fid=r.inputText.trim(); if(!fid){return;} if(fid===myClientId){return;} if(friendsList[fid]){handleChatOpen(fid, friendsList[fid].name, friendsList[fid].chatLock); return;} const name=`AI Bot (...)`; friendsList[fid]={name:name, chatLock:null}; saveFriends(); renderChatList(); openChatRoom(fid, name);} }); });
-         function getChatId(friendId) { if (!myClientId || !friendId) return null; const ids = [myClientId, friendId].sort(); return ids.join('_'); }
-         function renderChatList() { if(!chatList) return; chatList.innerHTML=''; const fids=Object.keys(friendsList); if(fids.length===0){chatList.innerHTML=`<p style="text-align: center; color: var(--system-text); padding: 20px;">Tap '+' to add.</p>`; return;} fids.forEach(fid=>{ const f=friendsList[fid]; if(!f||!f.name) return; const item=document.createElement('div'); item.className='chat-list-item'; item.dataset.friendId=fid; const av=f.name.charAt(0).toUpperCase(); const name=f.name; item.innerHTML=`<div class="chat-list-avatar"></div> <div class="chat-list-details"><div class="chat-list-name"></div><div class="chat-list-preview" id="preview_${fid}">...</div></div><div class="chat-list-meta"><span class="unread-badge" id="unread_${fid}" style="display: none;">0</span></div>`; item.querySelector('.chat-list-avatar').textContent=av; item.querySelector('.chat-list-name').textContent=name; item.addEventListener('click',()=>{handleChatOpen(fid,f.name,f.chatLock);}); item.addEventListener('contextmenu',(e)=>{e.preventDefault(); e.stopPropagation(); showChatListContextMenu(e,fid);}); chatList.appendChild(item); listenForUnread(fid);}); }
-         function handleChatOpen(friendId, friendName, chatLock) { if(chatLock){showModal({title:`Unlock: ${friendName}`, text:"Password?", password:"", primaryButton:"Unlock", secondaryButton:"Cancel"}, (r)=>{ if(r.primary&&r.password===chatLock){openChatRoom(friendId, friendName);} else if(r.primary){alert("Incorrect.");}});} else{openChatRoom(friendId, friendName);} }
-         function showChatListContextMenu(e, friendId) { contextFriendId=friendId; const mw=chatListContextMenu.offsetWidth||200; const mh=chatListContextMenu.offsetHeight||150; const sw=window.innerWidth; const sh=window.innerHeight; let l=e.clientX; let t=e.clientY; if(l+mw>sw) l=sw-mw-10; if(t+mh>sh) t=sh-mh-10; if(l<10)l=10; if(t<10)t=10; chatListContextMenu.style.top=`${t}px`; chatListContextMenu.style.left=`${l}px`; chatListContextMenu.style.display='block'; contextMenu.style.display='none'; }
-         document.getElementById('context-rename').onclick = () => { if(!contextFriendId) return; const fid=contextFriendId; const old=friendsList[fid]?.name||`AI (...)`; showModal({title:"Rename", text:`New name for "${old}".`, inputText:old, primaryButton:"Save", secondaryButton:"Cancel"}, (r)=>{ if(r.primary&&r.inputText){ if(!friendsList[fid]) friendsList[fid]={}; friendsList[fid].name=r.inputText; saveFriends(); renderChatList();} }); chatListContextMenu.style.display='none'; };
-         document.getElementById('context-lock').onclick = () => { if(!contextFriendId) return; const fid=contextFriendId; const lock=friendsList[fid]?.chatLock; showModal({title:lock?"Change/Remove Lock":"Set Lock", text:lock?"New pwd, or blank to remove.":"Set pwd.", password:"", passwordPlaceholder:"New pwd (or blank)", primaryButton:"Save", secondaryButton:"Cancel"}, (r)=>{ if(r.primary){ const newPass=r.password; const proceed=()=>{if(!friendsList[fid]) friendsList[fid]={}; friendsList[fid].chatLock=newPass||null; saveFriends(); alert(newPass?"Lock set!":"Lock removed!");}; if(lock){showModal({title:"Confirm Current", text:`Enter current pwd for "${friendsList[fid].name}".`, password:"", passwordPlaceholder:"Current pwd", primaryButton:"Confirm", secondaryButton:"Cancel"}, (cr)=>{ if(cr.primary&&cr.password===lock){proceed();} else if(cr.primary){alert("Incorrect.");}}); } else{proceed();} } }); chatListContextMenu.style.display='none'; };
-         document.getElementById('context-remove-lock').style.display = 'none'; // Keep hidden, use change/remove combo
-         document.getElementById('context-delete-chat').onclick = () => { if(!contextFriendId) return; const fid=contextFriendId; const name=friendsList[fid]?.name||`AI (...)`; if(confirm(`DELETE CHAT with "${name}"?\n\nThis deletes messages permanently.`)){ const cid=getChatId(fid); if(cid){db.ref(`messages/${cid}`).remove();} delete friendsList[fid]; saveFriends(); renderChatList(); if(messageListeners[cid]){messageListeners[cid].off(); delete messageListeners[cid];} if(unreadListeners[fid]){unreadListeners[fid].off(); delete unreadListeners[fid];}} chatListContextMenu.style.display='none'; };
+        myIdButton.addEventListener('click', () => { /* ... show ID ... */ if(!myClientId) return; showModal({ title: "My ID", text: "Share.", inputText: myClientId, readOnly: true, primaryButton: "Copy", secondaryButton: "Close" }, (r)=>{ if(r.primary){ try { navigator.clipboard.writeText(myClientId).then(()=>{alert("Copied!");}).catch(()=>{modalInputText.select(); document.execCommand('copy'); alert("Copied!");}); } catch (e){ modalInputText.select(); document.execCommand('copy'); alert("Copied!"); } } }); });
+        addFriendButton.addEventListener('click', () => { /* ... add friend ... */ if(!myClientId) return; showModal({ title: "Add Bot", text: "Enter ID.", inputText: "", placeholder: "Friend's ID", primaryButton: "Add", secondaryButton: "Cancel" }, (r)=>{ if(r.primary&&r.inputText){ const fid=r.inputText.trim(); if(!fid){return;} if(fid===myClientId){return;} if(friendsList[fid]){handleChatOpen(fid, friendsList[fid].name, friendsList[fid].chatLock); return;} const name=`AI Bot (...)`; friendsList[fid]={name:name, chatLock:null}; saveFriends(); renderChatList(); openChatRoom(fid, name);} }); });
+        function getChatId(friendId) { if (!myClientId || !friendId) return null; const ids = [myClientId, friendId].sort(); return ids.join('_'); }
+        function renderChatList() { /* ... render items ... */ if(!chatList) return; chatList.innerHTML=''; const fids=Object.keys(friendsList); if(fids.length===0){chatList.innerHTML=`<p style="text-align: center; color: var(--system-text); padding: 20px;">Tap '+' to add.</p>`; return;} fids.forEach(fid=>{ const f=friendsList[fid]; if(!f||!f.name) return; const item=document.createElement('div'); item.className='chat-list-item'; item.dataset.friendId=fid; const av=f.name.charAt(0).toUpperCase(); const name=f.name; item.innerHTML=`<div class="chat-list-avatar"></div> <div class="chat-list-details"><div class="chat-list-name"></div><div class="chat-list-preview" id="preview_${fid}">...</div></div><div class="chat-list-meta"><span class="unread-badge" id="unread_${fid}" style="display: none;">0</span></div>`; item.querySelector('.chat-list-avatar').textContent=av; item.querySelector('.chat-list-name').textContent=name; item.addEventListener('click',()=>{handleChatOpen(fid,f.name,f.chatLock);});
+        // **TOUCH FIX:** Add touch listeners for long press
+        item.addEventListener('touchstart', (e) => handleTouchStart(e, fid, showChatListContextMenu));
+        item.addEventListener('touchend', handleTouchEnd);
+        item.addEventListener('touchmove', handleTouchMove); // Cancel long press if finger moves
+        item.addEventListener('contextmenu',(e)=>{e.preventDefault(); e.stopPropagation(); showChatListContextMenu(e,fid);}); // Keep contextmenu for desktop
+        chatList.appendChild(item); listenForUnread(fid);}); }
+        function handleChatOpen(friendId, friendName, chatLock) { /* ... check lock ... */ if(chatLock){showModal({title:`Unlock: ${friendName}`, text:"Password?", password:"", primaryButton:"Unlock", secondaryButton:"Cancel"}, (r)=>{ if(r.primary&&r.password===chatLock){openChatRoom(friendId, friendName);} else if(r.primary){alert("Incorrect.");}});} else{openChatRoom(friendId, friendName);} }
 
-        // =======================================
-        // 4. CHAT ROOM LOGIC (MESSAGES) - **SEEN DELETE LOGIC FIX**
-        // =======================================
-        function openChatRoom(friendId, friendName) {
-            currentChatId = getChatId(friendId); currentFriendId = friendId; currentFriendName = friendName;
-            if (!currentChatId) { alert("Error."); navigateTo('chat-list-screen'); return; }
-            chatRoomName.textContent = friendName; messageList.innerHTML = '';
-
-            // **SEEN DELETE FIX:** Run cleanup ONLY when entering
-            cleanupSeenMessages();
-
-            if (presenceRef) { /* ... set presence listener ... */ const pref=presenceRef.child(friendId); pref.off(); pref.on('value',(s)=>{if(currentFriendId===friendId){if(s.val()===true){chatRoomStatus.textContent='● AI Online'; chatRoomStatus.className='online';}else{chatRoomStatus.textContent='● AI Offline'; chatRoomStatus.className='offline';}}}); } else {chatRoomStatus.textContent='● Status Unknown'; chatRoomStatus.className='offline';}
-            loadMessages(); // Load after potential cleanup
-            navigateTo('chat-room-screen');
-            setTimeout(() => { chatWindow.scrollTop = chatWindow.scrollHeight; markAllMessagesInChatAsSeen(); }, 150);
+        // **TOUCH FIX:** Positioning for Chat List Menu
+        function showChatListContextMenu(e, friendId) {
+             contextFriendId=friendId;
+             // Use coordinates from event (either touch or contextmenu)
+             const x = e.clientX ?? e.touches?.[0]?.clientX ?? window.innerWidth / 2;
+             const y = e.clientY ?? e.touches?.[0]?.clientY ?? window.innerHeight / 2;
+             positionContextMenu(chatListContextMenu, x, y);
+             chatListContextMenu.style.display='block';
+             contextMenu.style.display='none'; // Hide other menu
         }
 
-        function loadMessages() { /* ... same load logic using .once then .on ... */ if(!currentChatId) return; const ref=db.ref(`messages/${currentChatId}`); if(messageListeners[currentChatId]){messageListeners[currentChatId].off();} messageListeners[currentChatId]=ref.orderByChild('timestamp'); messageListeners[currentChatId].once('value',(s)=>{messageList.innerHTML=''; s.forEach((cs)=>{const m=cs.val(); if(!m) return; m.id=cs.key; displayMessage(m, false);}); chatWindow.scrollTop=chatWindow.scrollHeight; attachRealtimeListeners(ref);},(err)=>{}); }
+        // Chat List Context Menu Actions (remain same)
+        document.getElementById('context-rename').onclick = () => { if(!contextFriendId) return; const fid=contextFriendId; const old=friendsList[fid]?.name||`AI (...)`; showModal({title:"Rename", text:`New name for "${old}".`, inputText:old, primaryButton:"Save", secondaryButton:"Cancel"}, (r)=>{ if(r.primary&&r.inputText){ if(!friendsList[fid]) friendsList[fid]={}; friendsList[fid].name=r.inputText; saveFriends(); renderChatList();} }); chatListContextMenu.style.display='none'; };
+        document.getElementById('context-lock').onclick = () => { if(!contextFriendId) return; const fid=contextFriendId; const lock=friendsList[fid]?.chatLock; showModal({title:lock?"Change/Remove Lock":"Set Lock", text:lock?"New pwd, or blank to remove.":"Set pwd.", password:"", passwordPlaceholder:"New pwd (or blank)", primaryButton:"Save", secondaryButton:"Cancel"}, (r)=>{ if(r.primary){ const newPass=r.password; const proceed=()=>{if(!friendsList[fid]) friendsList[fid]={}; friendsList[fid].chatLock=newPass||null; saveFriends(); alert(newPass?"Lock set!":"Lock removed!");}; if(lock){showModal({title:"Confirm Current", text:`Enter current pwd for "${friendsList[fid].name}".`, password:"", passwordPlaceholder:"Current pwd", primaryButton:"Confirm", secondaryButton:"Cancel"}, (cr)=>{ if(cr.primary&&cr.password===lock){proceed();} else if(cr.primary){alert("Incorrect.");}}); } else{proceed();} } }); chatListContextMenu.style.display='none'; };
+        // document.getElementById('context-remove-lock').style.display = 'none'; // Keep hidden
+        document.getElementById('context-delete-chat').onclick = () => { if(!contextFriendId) return; const fid=contextFriendId; const name=friendsList[fid]?.name||`AI (...)`; if(confirm(`DELETE CHAT with "${name}"?\n\nDeletes messages permanently.`)){ const cid=getChatId(fid); if(cid){db.ref(`messages/${cid}`).remove();} delete friendsList[fid]; saveFriends(); renderChatList(); if(messageListeners[cid]){messageListeners[cid].off(); delete messageListeners[cid];} if(unreadListeners[fid]){unreadListeners[fid].off(); delete unreadListeners[fid];}} chatListContextMenu.style.display='none'; };
+
+        // =======================================
+        // 4. CHAT ROOM LOGIC (MESSAGES) - **SEEN DELETE FIX, TOUCH FIX**
+        // =======================================
+        function openChatRoom(friendId, friendName) { /* ... same open logic ... */ currentChatId=getChatId(friendId); currentFriendId=friendId; currentFriendName=friendName; if(!currentChatId){alert("Error."); navigateTo('chat-list-screen'); return;} chatRoomName.textContent=friendName; messageList.innerHTML=''; cleanupSeenMessages(); if(presenceRef){const pref=presenceRef.child(friendId); pref.off(); pref.on('value',(s)=>{if(currentFriendId===friendId){if(s.val()===true){chatRoomStatus.textContent='● AI Online'; chatRoomStatus.className='online';}else{chatRoomStatus.textContent='● AI Offline'; chatRoomStatus.className='offline';}}});} else{chatRoomStatus.textContent='● Status Unknown'; chatRoomStatus.className='offline';} loadMessages(); navigateTo('chat-room-screen'); setTimeout(()=>{chatWindow.scrollTop=chatWindow.scrollHeight; markAllMessagesInChatAsSeen();}, 150); }
+        function loadMessages() { /* ... same load logic ... */ if(!currentChatId) return; const ref=db.ref(`messages/${currentChatId}`); if(messageListeners[currentChatId]){messageListeners[currentChatId].off();} messageListeners[currentChatId]=ref.orderByChild('timestamp'); messageListeners[currentChatId].once('value',(s)=>{messageList.innerHTML=''; s.forEach((cs)=>{const m=cs.val(); if(!m) return; m.id=cs.key; displayMessage(m, false);}); chatWindow.scrollTop=chatWindow.scrollHeight; attachRealtimeListeners(ref);},(err)=>{}); }
         function attachRealtimeListeners(ref) { /* ... same attach logic ... */ ref.off('child_added'); ref.off('child_changed'); ref.off('child_removed'); ref.orderByChild('timestamp').on('child_added',(s)=>{if(document.getElementById(s.key)) return; const m=s.val(); if(!m) return; m.id=s.key; displayMessage(m, true);},(err)=>{}); ref.orderByChild('timestamp').on('child_changed',(s)=>{const m=s.val(); if(!m) return; m.id=s.key; const el=document.getElementById(m.id); if(el){if(m.deletedFor&&m.deletedFor[myClientId]){el.remove(); updateChatListPreview(currentFriendId);}else{const meta=el.querySelector('.message-meta'); if(meta&&m.seenBy&&m.seenBy[currentFriendId]&&!meta.textContent.includes('Seen')){meta.textContent+=' ✓ Seen';}}}}); ref.orderByChild('timestamp').on('child_removed',(s)=>{const el=document.getElementById(s.key); if(el){el.remove(); updateChatListPreview(currentFriendId);}}); }
         function listenForUnread(friendId) { /* ... same ... */ if(unreadListeners[friendId]){unreadListeners[friendId].off();} const cid=getChatId(friendId); if(!cid) return; const ref=db.ref(`messages/${cid}`); unreadListeners[friendId]=ref; unreadListeners[friendId].on('value', (s)=>{ let c=0; let lastTxt='...'; let lastType='normal'; let lastSender=null; s.forEach((ch)=>{const m=ch.val(); if(!m) return; if(m.senderId!==myClientId&&(!m.seenBy||!m.seenBy[myClientId])&&(!m.deletedFor||!m.deletedFor[myClientId])){c++;} if(!m.deletedFor||!m.deletedFor[myClientId]){lastTxt=m.text; lastType=m.type; lastSender=m.senderId;}}); const badge=document.getElementById(`unread_${friendId}`); if(badge){if(c>0){badge.textContent=c>9?'9+':c; badge.style.display='block';} else{badge.style.display='none';}} const preview=document.getElementById(`preview_${friendId}`); if(preview){if(lastType==='locked'&&lastSender===myClientId){preview.textContent='🔒 Locked';} else{preview.textContent=lastTxt||'...';}}}); }
         function updateChatListPreview(friendId) { /* ... same ... */ if(!friendId) return; const cid=getChatId(friendId); if(!cid) return; const ref=db.ref(`messages/${cid}`); ref.orderByChild('timestamp').limitToLast(1).once('value', (s)=>{ let lastTxt='...'; let lastType='normal'; let lastSender=null; if(s.exists()){s.forEach((c)=>{const m=c.val(); if(m&&(!m.deletedFor||!m.deletedFor[myClientId])){lastTxt=m.text; lastType=m.type; lastSender=m.senderId;}});} const preview=document.getElementById(`preview_${friendId}`); if(preview){if(lastType==='locked'&&lastSender===myClientId){preview.textContent='🔒 Locked';} else{preview.textContent=lastTxt||'...';}}}); }
         function listenForNewChats() { /* ... same ... */ if(!myClientId) return; db.ref('messages').on('child_added', (s)=>{const cid=s.key; if(!cid||!cid.includes('_')||!cid.includes(myClientId)) return; const fid=cid.replace(myClientId,'').replace('_',''); if(!friendsList[fid]&&fid){db.ref(`messages/${cid}`).orderByChild('timestamp').limitToFirst(1).once('value', (ms)=>{if(!ms.exists()) return; ms.forEach((cs)=>{const md=cs.val(); if(md&&md.senderId===fid){console.log("New chat:", fid); const name=`AI (...)`; friendsList[fid]={name:name, chatLock:null}; saveFriends(); renderChatList();}}); });}}); }
 
-        // Display message - **CONTEXT MENU FIX**
+        // Display message - **TOUCH FIX, CONTEXT MENU FIX**
         function displayMessage(msg, isNew) {
             // ... (Initial checks remain same) ...
-            if (!msg || !msg.id || !msg.senderId || !msg.timestamp || !myClientId) return;
-            if (msg.deletedFor && msg.deletedFor[myClientId]) { const el=document.getElementById(msg.id); if(el) el.remove(); return; }
-            if (document.getElementById(msg.id)) { return; }
+             if(!msg||!msg.id||!msg.senderId||!msg.timestamp||!myClientId)return; if(msg.deletedFor&&msg.deletedFor[myClientId]){const el=document.getElementById(msg.id); if(el)el.remove(); return;} if(document.getElementById(msg.id)){return;}
 
             const isUser = msg.senderId === myClientId;
-            const container = document.createElement('div'); container.id = msg.id; container.className = isUser ? 'message-container user-prompt' : 'message-container bot-response';
-            const bubble = document.createElement('div'); bubble.className = 'message-bubble'; bubble.dataset.msgId = msg.id;
+            const container=document.createElement('div'); container.id=msg.id; container.className=isUser?'message-container user-prompt':'message-container bot-response';
+            const bubble=document.createElement('div'); bubble.className='message-bubble'; bubble.dataset.msgId=msg.id;
 
             let messageText = ''; let isLockedForMe = false;
-            if (isUser && msg.type === 'locked') { /* ... locked text ... */ const d=getLockedMessage(msg.id); if(d){messageText='🔒 Tap to unlock...'; bubble.dataset.encrypted=d.encryptedText; isLockedForMe=true;}else{messageText='🔒 Content lost'; bubble.style.opacity = '0.7';} } else { messageText = msg.text || ""; }
+            if (isUser && msg.type === 'locked') { /* ... locked text ... */ const d=getLockedMessage(msg.id); if(d){messageText='🔒 Tap to unlock...'; bubble.dataset.encrypted=d.encryptedText; isLockedForMe=true;}else{messageText='🔒 Content lost'; bubble.style.opacity='0.7';} } else { messageText = msg.text || ""; }
             bubble.textContent = messageText;
 
             const meta = document.createElement('div'); /* ... meta ... */ meta.className='message-meta'; try{const ts=Number(msg.timestamp); metaText=new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}catch(e){metaText="--:--";} if(isUser&&msg.seenBy&&msg.seenBy[currentFriendId]){metaText+=' ✓ Seen';} meta.textContent=metaText;
@@ -210,31 +200,46 @@ document.addEventListener('DOMContentLoaded', () => {
             messageList.appendChild(container);
 
             // Scroll logic (remains same)
-            const isScrolledToBottom = chatWindow.scrollHeight - chatWindow.clientHeight <= chatWindow.scrollTop + 5; // Increased tolerance
+            const isScrolledToBottom = chatWindow.scrollHeight - chatWindow.clientHeight <= chatWindow.scrollTop + 5;
             if (isNew && (isUser || isScrolledToBottom)) { chatWindow.scrollTop = chatWindow.scrollHeight; }
-            else if (!isNew) { chatWindow.scrollTop = chatWindow.scrollHeight; } // Scroll on initial load
+            else if (!isNew) { chatWindow.scrollTop = chatWindow.scrollHeight; }
 
             // --- Event Listeners ---
-            if (isLockedForMe) { bubble.style.cursor = 'pointer'; bubble.addEventListener('click', handleUnlockClick); }
+            if (isLockedForMe) { bubble.style.cursor='pointer'; bubble.addEventListener('click', handleUnlockClick); }
 
-            // **CONTEXT MENU FIX**
-            bubble.addEventListener('contextmenu', (e) => {
-                e.preventDefault(); e.stopPropagation(); // Stop browser menu & bubbling
-                contextMsgId = bubble.dataset.msgId;
+            // **TOUCH & CONTEXT MENU FIX**
+            bubble.addEventListener('touchstart', (e) => handleTouchStart(e, msg.id, showMessageContextMenu));
+            bubble.addEventListener('touchend', handleTouchEnd);
+            bubble.addEventListener('touchmove', handleTouchMove);
+            bubble.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); showMessageContextMenu(e, msg.id); }); // Keep for desktop
 
-                // Dynamically build menu based on message state
-                contextMenu.innerHTML = ''; // Clear previous
-                const isCurrentlyLocked = isLockedForMe && !bubble.dataset.unlocked;
-                const isCurrentlyUnlocked = bubble.dataset.unlocked === "true";
-                const wasOriginallyLocked = isLockedForMe;
+            // Mark seen (remains same logic)
+            if (currentChatId === getChatId(msg.senderId) && !isUser && (!msg.seenBy || !msg.seenBy[myClientId])) { markMessageAsSeen(msg.id); }
+        }
 
-                if (isCurrentlyUnlocked) contextMenu.appendChild(contextRelockMsg.cloneNode(true)); // Clone node to re-attach listener
-                if (wasOriginallyLocked) contextMenu.appendChild(contextRemoveLock.cloneNode(true));
-                if (!wasOriginallyLocked && isUser && msg.type !== 'locked') contextMenu.appendChild(contextAddLock.cloneNode(true));
-                contextMenu.appendChild(contextDeleteMe.cloneNode(true));
-                if (isUser) contextMenu.appendChild(contextDeleteEveryone.cloneNode(true));
+        // Show context menu for messages
+        function showMessageContextMenu(e, msgId) {
+             contextMsgId = msgId;
+             const bubble = document.getElementById(msgId)?.querySelector('.message-bubble');
+             if (!bubble) return;
+             const msgDataRef = db.ref(`messages/${currentChatId}/${msgId}`);
+             msgDataRef.once('value', (snapshot) => { // Get latest data
+                  const msgData = snapshot.val();
+                  if (!msgData) return;
+                  const isUser = msgData.senderId === myClientId;
 
-                // Re-attach listeners to cloned nodes
+                 contextMenu.innerHTML = ''; // Clear previous
+                 const isCurrentlyLocked = isUser && msgData.type === 'locked' && !bubble.dataset.unlocked;
+                 const isCurrentlyUnlocked = bubble.dataset.unlocked === "true";
+                 const wasOriginallyLocked = isUser && msgData.type === 'locked'; // Check original type from DB
+
+                 if (isCurrentlyUnlocked) contextMenu.appendChild(contextRelockMsg.cloneNode(true));
+                 if (wasOriginallyLocked) contextMenu.appendChild(contextRemoveLock.cloneNode(true));
+                 if (!wasOriginallyLocked && isUser) contextMenu.appendChild(contextAddLock.cloneNode(true));
+                 contextMenu.appendChild(contextDeleteMe.cloneNode(true));
+                 if (isUser) contextMenu.appendChild(contextDeleteEveryone.cloneNode(true));
+
+                 // Re-attach listeners
                  const currentMenu = document.getElementById('context-menu');
                  if(currentMenu.querySelector('#context-relock')) currentMenu.querySelector('#context-relock').onclick = handleRelockClick;
                  if(currentMenu.querySelector('#context-remove-lock-msg')) currentMenu.querySelector('#context-remove-lock-msg').onclick = handleRemoveLockClick;
@@ -242,27 +247,20 @@ document.addEventListener('DOMContentLoaded', () => {
                  if(currentMenu.querySelector('#context-delete-me')) currentMenu.querySelector('#context-delete-me').onclick = handleDeleteMeClick;
                  if(currentMenu.querySelector('#context-delete-everyone')) currentMenu.querySelector('#context-delete-everyone').onclick = handleDeleteEveryoneClick;
 
-
-                // Position and show menu
-                const menuWidth=contextMenu.offsetWidth||200; const menuHeight=contextMenu.offsetHeight||200; // Estimate height
-                const sw=window.innerWidth; const sh=window.innerHeight; let l=e.clientX; let t=e.clientY;
-                if(l+menuWidth>sw) l=sw-menuWidth-10; if(t+menuHeight>sh) t=sh-menuHeight-10; if(l<10)l=10; if(t<10)t=10;
-                contextMenu.style.top=`${t}px`; contextMenu.style.left=`${l}px`;
-                contextMenu.style.display='block';
-                chatListContextMenu.style.display='none';
-            });
-
-            // Mark seen (remains same logic)
-            if (currentChatId === getChatId(msg.senderId) && !isUser && (!msg.seenBy || !msg.seenBy[myClientId])) { markMessageAsSeen(msg.id); }
+                 // Position and show menu
+                 const x = e.clientX ?? e.touches?.[0]?.clientX ?? window.innerWidth / 2;
+                 const y = e.clientY ?? e.touches?.[0]?.clientY ?? window.innerHeight / 2;
+                 positionContextMenu(contextMenu, x, y);
+                 contextMenu.style.display='block';
+                 chatListContextMenu.style.display='none';
+             });
         }
-        function handleUnlockClick(e) { /* ... same unlock logic ... */ const b=e.currentTarget; const enc=b.dataset.encrypted; if(!enc){b.textContent='🔒 Lost';return;} if(b.dataset.unlocked==="true") return; showModal({title:"Unlock", text:"Password?", password:"", primaryButton:"Unlock", secondaryButton:"Cancel"},(r)=>{if(r.primary&&r.password){try{const dec=decryptText(enc,r.password); b.textContent=dec; b.style.cursor='default'; b.dataset.unlocked="true";}catch(e){alert("Incorrect.");}}}); }
 
-        // Mark seen - NOTIFICATION BADGE FIX
-        function markMessageAsSeen(msgId) { /* ... same logic ... */ if (!currentChatId || !myClientId || !currentFriendId) return; db.ref(`messages/${currentChatId}/${msgId}/seenBy/${myClientId}`).once('value', (s)=>{ if(!s.exists()||s.val()!==true){ const ref=db.ref(`messages/${currentChatId}/${msgId}/seenBy/${myClientId}`); ref.set(true).then(()=>{updateUnreadCount(currentFriendId);});}}); }
-        function markAllMessagesInChatAsSeen() { /* ... same logic ... */ if (!currentChatId || !myClientId || !currentFriendId) return; const ref=db.ref(`messages/${currentChatId}`); ref.once('value', (s)=>{const updates={}; s.forEach((c)=>{const m=c.val(); if(m&&m.senderId!==myClientId&&(!m.seenBy||!m.seenBy[myClientId])){updates[`${c.key}/seenBy/${myClientId}`]=true;}}); if(Object.keys(updates).length>0){ref.update(updates).then(()=>{updateUnreadCount(currentFriendId);});}}); }
-        function updateUnreadCount(friendId) { /* ... same logic ... */ if(!friendId) return; const cid=getChatId(friendId); if(!cid) return; const ref=db.ref(`messages/${cid}`); ref.once('value', (s)=>{let c=0; s.forEach((ch)=>{const m=ch.val(); if(m&&m.senderId!==myClientId&&(!m.seenBy||!m.seenBy[myClientId])&&(!m.deletedFor||!m.deletedFor[myClientId])){c++;}}); const el=document.getElementById(`unread_${friendId}`); if(el){if(c>0){el.textContent=c>9?'9+':c; el.style.display='block';} else{el.style.display='none';}}}); }
-
-    // **SEEN DELETE LOGIC FIX (Local Deletion on Re-Entry)**
+        function handleUnlockClick(e) { /* ... same logic ... */ const b=e.currentTarget; const enc=b.dataset.encrypted; if(!enc){b.textContent='🔒 Lost';return;} if(b.dataset.unlocked==="true") return; showModal({title:"Unlock", text:"Password?", password:"", primaryButton:"Unlock", secondaryButton:"Cancel"},(r)=>{if(r.primary&&r.password){try{const dec=decryptText(enc,r.password); b.textContent=dec; b.style.cursor='default'; b.dataset.unlocked="true";}catch(e){alert("Incorrect.");}}}); }
+        function markMessageAsSeen(msgId) { /* ... same ... */ if (!currentChatId || !myClientId || !currentFriendId) return; db.ref(`messages/${currentChatId}/${msgId}/seenBy/${myClientId}`).once('value', (s)=>{ if(!s.exists()||s.val()!==true){ const ref=db.ref(`messages/${currentChatId}/${msgId}/seenBy/${myClientId}`); ref.set(true).then(()=>{updateUnreadCount(currentFriendId);});}}); }
+        function markAllMessagesInChatAsSeen() { /* ... same ... */ if (!currentChatId || !myClientId || !currentFriendId) return; const ref=db.ref(`messages/${currentChatId}`); ref.once('value', (s)=>{const updates={}; s.forEach((c)=>{const m=c.val(); if(m&&m.senderId!==myClientId&&(!m.seenBy||!m.seenBy[myClientId])){updates[`${c.key}/seenBy/${myClientId}`]=true;}}); if(Object.keys(updates).length>0){ref.update(updates).then(()=>{updateUnreadCount(currentFriendId);});}}); }
+        function updateUnreadCount(friendId) { /* ... same ... */ if(!friendId) return; const cid=getChatId(friendId); if(!cid) return; const ref=db.ref(`messages/${cid}`); ref.once('value', (s)=>{let c=0; s.forEach((ch)=>{const m=ch.val(); if(m&&m.senderId!==myClientId&&(!m.seenBy||!m.seenBy[myClientId])&&(!m.deletedFor||!m.deletedFor[myClientId])){c++;}}); const el=document.getElementById(`unread_${friendId}`); if(el){if(c>0){el.textContent=c>9?'9+':c; el.style.display='block';} else{el.style.display='none';}}}); }
+        // **SEEN DELETE LOGIC FIX (Local Deletion ONLY on Re-Entry)**
         function cleanupSeenMessages() {
              if (!currentChatId || !myClientId || isProcessingCleanup) return;
              console.log("Cleanup: Checking LOCAL for seen messages in:", currentChatId);
@@ -301,116 +299,195 @@ document.addEventListener('DOMContentLoaded', () => {
         function sendMessage(isLocked) { /* ... same ... */ if(!currentChatId||!myClientId)return; const txt=messageInput.value.trim(); if(txt==='')return; if(isLocked){showModal({title:"Lock", text:"Password?", password:"", passwordPlaceholder:"Password", primaryButton:"Lock & Send", secondaryButton:"Cancel"},(r)=>{if(r.primary&&r.password){sendFirebaseMessage(txt,true,r.password);}else if(r.primary){alert("Need pwd.");}});}else{sendFirebaseMessage(txt,false,null);}}
         function sendFirebaseMessage(text, isLocked, password) { /* ... same ... */ const ref=db.ref(`messages/${currentChatId}`); const newRef=ref.push(); const mid=newRef.key; let data={senderId:myClientId, text:text, type:isLocked?'locked':'normal', timestamp:firebase.database.ServerValue.TIMESTAMP, seenBy:null, deletedFor:null}; if(isLocked){try{const enc=encryptText(text,password); saveLockedMessage(mid,enc);}catch(e){alert("Lock failed."); data.type='normal';}} newRef.set(data).then(()=>{messageInput.value=''; messageInput.style.height='auto'; chatWindow.scrollTop=chatWindow.scrollHeight;}).catch((err)=>{alert('Send failed.');}); }
 
-        // --- Message Deletion Actions ---
-        function handleDeleteMeClick() {
-             if (!contextMsgId || !currentChatId || !myClientId) return;
-             db.ref(`messages/${currentChatId}/${contextMsgId}/deletedFor/${myClientId}`).set(true).then(()=>{ const el=document.getElementById(contextMsgId); if(el) el.remove(); updateChatListPreview(currentFriendId); });
-             contextMenu.style.display = 'none';
-        }
-        function handleDeleteEveryoneClick() {
-             if (!contextMsgId || !currentChatId) return;
-             db.ref(`messages/${currentChatId}/${contextMsgId}`).remove().then(()=>{ updateChatListPreview(currentFriendId); });
-             contextMenu.style.display = 'none';
-        }
+        // --- Message Deletion Actions --- (remain same)
+        function handleDeleteMeClick() { if(!contextMsgId||!currentChatId||!myClientId) return; db.ref(`messages/${currentChatId}/${contextMsgId}/deletedFor/${myClientId}`).set(true).then(()=>{const el=document.getElementById(contextMsgId); if(el) el.remove(); updateChatListPreview(currentFriendId);}); contextMenu.style.display='none'; }
+        function handleDeleteEveryoneClick() { if(!contextMsgId||!currentChatId) return; db.ref(`messages/${currentChatId}/${contextMsgId}`).remove().then(()=>{updateChatListPreview(currentFriendId);}); contextMenu.style.display='none'; }
 
-        // --- NEW Lock/Unlock actions from context menu --- (**LOCK LOST FIX**)
-        function handleRelockClick() {
-             if (!contextMsgId) return;
-             const bubble = document.getElementById(contextMsgId)?.querySelector('.message-bubble');
-             if (!bubble || !bubble.dataset.unlocked) return;
-             const lockedData = getLockedMessage(contextMsgId);
-             if (lockedData) {
-                 bubble.textContent = '🔒 Tap to unlock...';
-                 bubble.style.cursor = 'pointer';
-                 delete bubble.dataset.unlocked;
-                 alert("Re-locked.");
-             } else { alert("Cannot re-lock."); }
-             contextMenu.style.display = 'none';
-        }
+        // --- Lock/Unlock actions --- (**LOCK LOST FIX**)
+        function handleRelockClick() { if(!contextMsgId) return; const b=document.getElementById(contextMsgId)?.querySelector('.message-bubble'); if(!b||!b.dataset.unlocked) return; const d=getLockedMessage(contextMsgId); if(d){b.textContent='🔒 Tap to unlock...'; b.style.cursor='pointer'; delete b.dataset.unlocked; alert("Re-locked.");} else{alert("Cannot re-lock.");} contextMenu.style.display='none'; }
         function handleRemoveLockClick() {
-             if (!contextMsgId) return;
-             const bubble = document.getElementById(contextMsgId)?.querySelector('.message-bubble');
-             const lockedData = getLockedMessage(contextMsgId);
-             if (!bubble || !lockedData) { alert("Not locked."); contextMenu.style.display = 'none'; return; }
-             showModal({ title: "Remove Lock", text: "Enter password to unlock permanently.", password: "", primaryButton: "Remove", secondaryButton: "Cancel"
-             }, (result) => {
+             if (!contextMsgId) return; const bubble = document.getElementById(contextMsgId)?.querySelector('.message-bubble'); const lockedData = getLockedMessage(contextMsgId); if (!bubble || !lockedData) { alert("Not locked."); contextMenu.style.display = 'none'; return; }
+             showModal({ title: "Remove Lock", text: "Enter password.", password: "", primaryButton: "Remove", secondaryButton: "Cancel" }, (result) => {
                  if (result.primary && result.password) {
-                     try {
-                         const decrypted = decryptText(lockedData.encryptedText, result.password);
-                         // **FIX: Remove from local storage**
-                         let lockedMessages = JSON.parse(localStorage.getItem('myLockedMessages')) || {};
-                         delete lockedMessages[contextMsgId];
-                         localStorage.setItem('myLockedMessages', JSON.stringify(lockedMessages));
-                         // Update bubble
-                         bubble.textContent = decrypted;
-                         bubble.style.cursor = 'default';
-                         delete bubble.dataset.encrypted;
-                         bubble.dataset.unlocked = "true"; // Mark as permanently unlocked
-                         // **FIX: Update message type in Firebase if needed? No, keep it locked there**
-                         // **FIX: Update message text in Firebase? No, only local**
+                     try { const decrypted = decryptText(lockedData.encryptedText, result.password);
+                         let lockedMsgs = JSON.parse(localStorage.getItem('myLockedMessages')) || {}; delete lockedMsgs[contextMsgId]; localStorage.setItem('myLockedMessages', JSON.stringify(lockedMsgs));
+                         bubble.textContent = decrypted; bubble.style.cursor = 'default'; delete bubble.dataset.encrypted; bubble.dataset.unlocked = "true";
+                         // **FIX: Update Firebase type? No, keep it as sent**
                          alert("Lock removed locally.");
-                     } catch (e) { alert("Incorrect password."); }
-                 }
-             });
-             contextMenu.style.display = 'none';
+                     } catch (e) { alert("Incorrect password."); } } }); contextMenu.style.display = 'none';
         }
         function handleAddLockClick() {
-             if (!contextMsgId) return;
-             const bubble = document.getElementById(contextMsgId)?.querySelector('.message-bubble');
-             if (!bubble || bubble.dataset.encrypted) { alert("Cannot lock."); contextMenu.style.display = 'none'; return; }
-             const currentText = bubble.textContent;
-             showModal({ title: "Add Lock", text: "Create password.", password: "", primaryButton: "Lock", secondaryButton: "Cancel"
-             }, (result) => {
+            if (!contextMsgId) return; const bubble = document.getElementById(contextMsgId)?.querySelector('.message-bubble'); if (!bubble || bubble.dataset.encrypted){ alert("Cannot lock."); contextMenu.style.display = 'none'; return; } const currentText = bubble.textContent;
+            showModal({ title: "Add Lock", text: "Create password.", password: "", primaryButton: "Lock", secondaryButton: "Cancel" }, (result) => {
                  if (result.primary && result.password) {
-                     try {
-                         const encryptedText = encryptText(currentText, result.password);
-                         saveLockedMessage(contextMsgId, encryptedText);
-                         // Update bubble
-                         bubble.textContent = '🔒 Tap to unlock...';
-                         bubble.dataset.encrypted = encryptedText;
-                         bubble.style.cursor = 'pointer';
-                         delete bubble.dataset.unlocked;
-                         // **FIX: Update type in Firebase to 'locked'? No, keep original type**
+                     try { const encryptedText = encryptText(currentText, result.password); saveLockedMessage(contextMsgId, encryptedText);
+                         bubble.textContent = '🔒 Tap to unlock...'; bubble.dataset.encrypted = encryptedText; bubble.style.cursor = 'pointer'; delete bubble.dataset.unlocked;
+                         // **FIX: Update Firebase type? No, keep original type**
                          alert("Locked locally.");
-                     } catch (e) { alert("Could not lock."); }
-                 }
-             });
-             contextMenu.style.display = 'none';
-    }
-                    // Hide context menus on outside click (remains same)
+                     } catch (e) { alert("Could not lock."); } } }); contextMenu.style.display = 'none';
+        }
+
+
+        // Hide context menus on outside click (remains same)
         document.addEventListener('click', (e)=>{if(contextMenu&&!contextMenu.contains(e.target)&&!e.target.closest('.message-bubble')){contextMenu.style.display='none';} if(chatListContextMenu&&!chatListContextMenu.contains(e.target)&&!e.target.closest('.chat-list-item')){chatListContextMenu.style.display='none';}});
-
         // Modal Helper (remains same)
-        let modalCallback = null;
-        function showModal(options, callback) { /* ... same ... */ modalTitle.textContent=options.title||""; modalText.textContent=options.text||""; if(options.inputText!==undefined){modalInputText.value=options.inputText; modalInputText.placeholder=options.placeholder||""; modalInputText.style.display='block'; modalInputText.readOnly=options.readOnly||false;}else{modalInputText.style.display='none';} if(options.password!==undefined){modalInputPassword.value=""; modalInputPassword.placeholder=options.passwordPlaceholder||"Password"; modalInputPassword.style.display='block';}else{modalInputPassword.style.display='none';} modalButtonPrimary.textContent=options.primaryButton||"OK"; modalButtonSecondary.textContent=options.secondaryButton||"Cancel"; modalCallback=callback; modal.style.display='flex'; }
-        modalButtonPrimary.addEventListener('click',()=>{/* ... same ... */ modal.style.display='none'; if(modalCallback){modalCallback({primary:true, inputText:modalInputText.style.display!=='none'?modalInputText.value:undefined, password:modalInputPassword.style.display!=='none'?modalInputPassword.value:undefined});} modalInputText.value=""; modalInputPassword.value=""; });
-        modalButtonSecondary.addEventListener('click',()=>{/* ... same ... */ modal.style.display='none'; if(modalCallback){modalCallback({primary:false});} modalInputText.value=""; modalInputPassword.value=""; });
+        let modalCallback = null; function showModal(options, callback) { /* ... */ modalTitle.textContent=options.title||""; modalText.textContent=options.text||""; if(options.inputText!==undefined){modalInputText.value=options.inputText; modalInputText.placeholder=options.placeholder||""; modalInputText.style.display='block'; modalInputText.readOnly=options.readOnly||false;}else{modalInputText.style.display='none';} if(options.password!==undefined){modalInputPassword.value=""; modalInputPassword.placeholder=options.passwordPlaceholder||"Password"; modalInputPassword.style.display='block';}else{modalInputPassword.style.display='none';} modalButtonPrimary.textContent=options.primaryButton||"OK"; modalButtonSecondary.textContent=options.secondaryButton||"Cancel"; modalCallback=callback; modal.style.display='flex'; } modalButtonPrimary.addEventListener('click',()=>{modal.style.display='none'; if(modalCallback){modalCallback({primary:true, inputText:modalInputText.style.display!=='none'?modalInputText.value:undefined, password:modalInputPassword.style.display!=='none'?modalInputPassword.value:undefined});} modalInputText.value=""; modalInputPassword.value=""; }); modalButtonSecondary.addEventListener('click',()=>{modal.style.display='none'; if(modalCallback){modalCallback({primary:false});} modalInputText.value=""; modalInputPassword.value=""; });
+        // Crypto Helpers (remains same)
+        function encryptText(text, password){return CryptoJS.AES.encrypt(text, password).toString();} function decryptText(enc, pwd){const b=CryptoJS.AES.decrypt(enc, pwd); const t=b.toString(CryptoJS.enc.Utf8); if(!t)throw Error("Decrypt failed"); return t;} function saveLockedMessage(id, enc){let l=JSON.parse(localStorage.getItem('myLockedMessages'))||{}; l[id]={encryptedText:enc}; const k=Object.keys(l); if(k.length>100){delete l[k[0]];} localStorage.setItem('myLockedMessages',JSON.stringify(l));} function getLockedMessage(id){let l=JSON.parse(localStorage.getItem('myLockedMessages'))||{}; return l[id];}
 
-        // Crypto Helpers (remain same)
-        function encryptText(text, password){return CryptoJS.AES.encrypt(text, password).toString();}
-        function decryptText(enc, pwd){const b=CryptoJS.AES.decrypt(enc, pwd); const t=b.toString(CryptoJS.enc.Utf8); if(!t)throw Error("Decrypt failed"); return t;}
-        function saveLockedMessage(id, enc){let l=JSON.parse(localStorage.getItem('myLockedMessages'))||{}; l[id]={encryptedText:enc}; const k=Object.keys(l); if(k.length>100){delete l[k[0]];} localStorage.setItem('myLockedMessages',JSON.stringify(l));} // Increased limit
-        function getLockedMessage(id){let l=JSON.parse(localStorage.getItem('myLockedMessages'))||{}; return l[id];}
 
         // =======================================
-        // 7. WebRTC (CALLING) LOGIC - NO CHANGES INTENDED
+        // 7. WebRTC (CALLING) LOGIC - **NEW CONTROLS**
         // =======================================
         const pcConfig = { 'iceServers': [ { 'urls': 'stun:stun.l.google.com:19302' }, { 'urls': 'stun:stun1.l.google.com:19302' } ] };
-        voiceCallBtn.addEventListener('click', () => { startCall('voice'); });
-        videoCallBtn.addEventListener('click', () => { startCall('video'); });
-        // --- All WebRTC functions remain the same ---
-         async function startCall(type) { if(!currentFriendId||!myClientId||currentCallId)return; console.log(`Start ${type} call to ${currentFriendId}`); currentCallType=type; currentCallFriendId=currentFriendId; const pushRef=db.ref(`calls/${currentFriendId}`).push(); currentCallId=pushRef.key; try { localStream = await navigator.mediaDevices.getUserMedia({ video: type === 'video', audio: true }); showCallingScreen(type, `Calling ${currentFriendName}...`); attachMediaStream(document.getElementById('local-video'), localStream); } catch (e) { console.error("Media err:", e); alert("Perm check?"); if(currentCallId){db.ref(`calls/${currentFriendId}/${currentCallId}`).remove(); currentCallId=null;} return; } const pc=createPeerConnection(currentFriendId, currentCallId, type); if(!pc){hangUp(false); return;} rtpcConnections[currentCallId]=pc; localStream.getTracks().forEach(t=>{try{pc.addTrack(t, localStream);}catch(e){}}); try { const offer=await pc.createOffer(); await pc.setLocalDescription(offer); const data={from:myClientId, to:currentFriendId, type:type, offer:{type:offer.type, sdp:offer.sdp}}; await pushRef.set(data); const friendRef=db.ref(`calls/${myClientId}/${currentCallId}`); friendRef.on('value', async (s)=>{const pcc=rtpcConnections[currentCallId]; if(!pcc||pcc.signalingState==='closed') return; const d=s.val(); if(!d) return; if(d.answer&&!pcc.currentRemoteDescription){const a=new RTCSessionDescription(d.answer); try{await pcc.setRemoteDescription(a); startCallTimer();}catch(e){hangUp(true);}} if(d.declined){alert("Declined."); hangUp(false); s.ref.remove();} if(d.hungup){hangUp(false); s.ref.remove();}}); const iceRef=db.ref(`iceCandidates/${myClientId}/${currentCallId}`); iceRef.on('child_added', (s)=>{const pcc=rtpcConnections[currentCallId]; if(s.exists()&&pcc&&pcc.signalingState!=='closed'){pcc.addIceCandidate(new RTCIceCandidate(s.val())).catch(e=>{}); s.ref.remove();}}); } catch (e) { alert("Call init failed."); hangUp(false); } }
-         function showIncomingCallAlert(type, name, friendId, callId){if(currentCallId){db.ref(`calls/${myClientId}/${callId}`).update({declined: true}); setTimeout(()=>db.ref(`calls/${myClientId}/${callId}`).remove(),5000); return;} currentCallId=callId; currentCallType=type; currentCallFriendId=friendId; incomingCallTitle.textContent=`Incoming ${type} call...`; incomingCallFrom.textContent=`from ${name}`; incomingCallAlert.style.display='block'; acceptCallBtn.onclick=acceptCall; declineCallBtn.onclick=declineCall;}
-         async function acceptCall(){if(!currentCallId||!currentCallFriendId||!currentCallType)return; console.log(`Accept ${currentCallType} ${currentCallId}`); incomingCallAlert.style.display='none'; const ref=db.ref(`calls/${myClientId}/${currentCallId}`); try{localStream=await navigator.mediaDevices.getUserMedia({video:currentCallType==='video',audio:true}); const name=friendsList[currentCallFriendId]?.name||`AI(...)`; showCallingScreen(currentCallType, `Connecting with ${name}...`); attachMediaStream(document.getElementById('local-video'),localStream);}catch(e){alert("Media err?"); declineCall(); return;} const pc=createPeerConnection(currentCallFriendId, currentCallId, currentCallType); if(!pc){hangUp(false); return;} rtpcConnections[currentCallId]=pc; localStream.getTracks().forEach(t=>{try{pc.addTrack(t,localStream);}catch(e){}}); try{const data=(await ref.once('value')).val(); if(!data||!data.offer)throw Error("No offer"); const offer=new RTCSessionDescription(data.offer); await pc.setRemoteDescription(offer); const answer=await pc.createAnswer(); await pc.setLocalDescription(answer); const callerRef=db.ref(`calls/${currentCallFriendId}/${currentCallId}`); await callerRef.update({answer:{type:answer.type, sdp:answer.sdp}}); startCallTimer(); const callerIceRef=db.ref(`iceCandidates/${myClientId}/${currentCallId}`); callerIceRef.on('child_added', (s)=>{const pcc=rtpcConnections[currentCallId]; if(s.exists()&&pcc&&pcc.signalingState!=='closed'){pcc.addIceCandidate(new RTCIceCandidate(s.val())).catch(e=>{}); s.ref.remove();}}); ref.on('value', (s)=>{const d=s.val(); if(d&&d.hungup){hangUp(false); s.ref.remove();}}); } catch(e){alert("Connect failed."); hangUp(false);} }
-         function declineCall(){console.log("Declining:", currentCallId); incomingCallAlert.style.display='none'; if(currentCallId&&currentCallFriendId){const ref=db.ref(`calls/${currentCallFriendId}/${currentCallId}`); ref.update({declined:true}); db.ref(`calls/${myClientId}/${currentCallId}`).remove(); db.ref(`iceCandidates/${myClientId}/${currentCallId}`).remove();} currentCallId=null; currentCallFriendId=null; currentCallType=null;}
-         function createPeerConnection(friendId, callId, type){try{const pc=new RTCPeerConnection(pcConfig); pc.onicecandidate=(e)=>{if(e.candidate&&friendId&&callId){db.ref(`iceCandidates/${friendId}/${callId}`).push(e.candidate.toJSON());}}; pc.ontrack=(e)=>{const rv=document.getElementById('remote-video'); if(!remoteStream){remoteStream=new MediaStream();} if(!remoteStream.getTracks().includes(e.track)){remoteStream.addTrack(e.track);} attachMediaStream(rv, remoteStream); if(type==='voice'&&rv){rv.style.display='none';} else if(rv){rv.style.display='block';} const name=friendsList[friendId]?.name||`AI(...)`; if(callingStatus) callingStatus.textContent=`On call with ${name}`;}; pc.onconnectionstatechange=()=>{if(pc.connectionState==='disconnected'||pc.connectionState==='failed'||pc.connectionState==='closed'){hangUp(true);}}; pc.onsignalingstatechange=()=>{}; pc.oniceconnectionstatechange=()=>{if(pc.iceConnectionState==='failed'){hangUp(true);}}; return pc;} catch(e){alert("Call failed (Browser?)."); return null;}}
-         function showCallingScreen(type, status){const rv=document.getElementById('remote-video'); const lv=document.getElementById('local-video'); if(type==='voice'){if(rv) rv.style.display='none'; if(lv) lv.style.display='none';} else{if(rv) rv.style.display='block'; if(lv) lv.style.display='block';} if(callingStatus) callingStatus.textContent=status; if(callTimer) callTimer.textContent='00:00'; if(hangupButton) hangupButton.onclick=()=>hangUp(true); if(callingScreen) callingScreen.style.display='flex';}
-         function hangUp(sendSignal=true){if(!currentCallId&&!localStream&&!remoteStream)return; if(currentCallId&&rtpcConnections[currentCallId]){try{rtpcConnections[currentCallId].close();}catch(e){} delete rtpcConnections[currentCallId];} if(localStream){localStream.getTracks().forEach(t=>t.stop()); localStream=null;} if(remoteStream){const rv=document.getElementById('remote-video'); if(rv) rv.srcObject=null; remoteStream.getTracks().forEach(t=>t.stop()); remoteStream=null;} if(sendSignal&&currentCallId&&currentCallFriendId){const ref=db.ref(`calls/${currentCallFriendId}/${currentCallId}`); ref.update({hungup:true}).then(()=>setTimeout(()=>ref.remove(),5000)).catch(()=>{});} if(currentCallId&&myClientId){db.ref(`calls/${myClientId}/${currentCallId}`).remove(); db.ref(`iceCandidates/${myClientId}/${currentCallId}`).remove(); if(currentCallFriendId){db.ref(`iceCandidates/${currentCallFriendId}/${currentCallId}`).remove();}} if(callingScreen) callingScreen.style.display='none'; if(incomingCallAlert) incomingCallAlert.style.display='none'; if(callTimerInterval){clearInterval(callTimerInterval); callTimerInterval=null;} currentCallId=null; currentCallType=null; currentCallFriendId=null; console.log("Call state reset");}
-         function attachMediaStream(element, stream){if(element&&stream){try{if(element.srcObject!==stream){element.srcObject=stream;}}catch(e){}} else{if(stream){}}}
-         function startCallTimer(){if(callTimerInterval)clearInterval(callTimerInterval); let s=0; if(callTimer) callTimer.textContent='00:00'; callTimerInterval=setInterval(()=>{s++; const m=Math.floor(s/60).toString().padStart(2,'0'); const ss=(s%60).toString().padStart(2,'0'); if(callTimer) callTimer.textContent=`${m}:${ss}`;}, 1000);}
+
+        // --- Call Control Button Listeners ---
+        toggleMuteBtn.addEventListener('click', toggleMute);
+        toggleSpeakerBtn.addEventListener('click', toggleSpeaker);
+        toggleVideoBtn.addEventListener('click', toggleVideo);
+        swapVideoBtn.addEventListener('click', swapVideos);
+
+        // --- Mute/Unmute ---
+        function toggleMute() {
+            if (!localStream) return;
+            const audioTracks = localStream.getAudioTracks();
+            if (audioTracks.length > 0) {
+                audioTracks[0].enabled = !audioTracks[0].enabled;
+                toggleMuteBtn.textContent = audioTracks[0].enabled ? '🎤' : '🚫';
+                toggleMuteBtn.classList.toggle('muted', !audioTracks[0].enabled);
+                console.log("Mute toggled:", !audioTracks[0].enabled);
+            }
+        }
+
+        // --- Speakerphone (Experimental) ---
+        async function toggleSpeaker() {
+            const remoteVideo = document.getElementById('remote-video');
+            if (!remoteStream || !remoteVideo) return;
+            try {
+                 // Attempt using setSinkId (might not work on all devices/browsers)
+                 if (typeof remoteVideo.setSinkId === 'function') {
+                      const devices = await navigator.mediaDevices.enumerateDevices();
+                      const speaker = devices.find(device => device.kind === 'audiooutput' && device.label && device.label.toLowerCase().includes('speaker'));
+                      const defaultDevice = devices.find(device => device.kind === 'audiooutput' && device.deviceId === 'default');
+
+                      // Find the current sinkId if possible
+                      let currentSinkId = '';
+                      try { currentSinkId = remoteVideo.sinkId || 'default'; } catch(e){}
+
+                      let targetSinkId = 'default'; // Default to earpiece/default
+
+                      // If currently default/earpiece, try switching to speaker
+                      if (currentSinkId === 'default' && speaker) {
+                           targetSinkId = speaker.deviceId;
+                           console.log("Switching to Speaker");
+                           toggleSpeakerBtn.classList.add('active'); // Indicate speaker is on
+                      } else {
+                           console.log("Switching to Default/Earpiece");
+                           toggleSpeakerBtn.classList.remove('active'); // Indicate speaker is off
+                      }
+                      await remoteVideo.setSinkId(targetSinkId);
+                      console.log("Audio output set to:", targetSinkId);
+
+                 } else {
+                     console.warn("setSinkId not supported for speaker toggle.");
+                     // Fallback: Try manipulating audio context (more complex, not implemented here)
+                     alert("Speaker toggle not supported on this browser.");
+                 }
+            } catch (err) {
+                 console.error('Error toggling speaker:', err);
+                 alert("Could not switch audio output.");
+            }
+        }
+
+
+        // --- Video On/Off ---
+        function toggleVideo() {
+            if (!localStream || currentCallType !== 'video') return;
+            const videoTracks = localStream.getVideoTracks();
+            if (videoTracks.length > 0) {
+                videoTracks[0].enabled = !videoTracks[0].enabled;
+                toggleVideoBtn.textContent = videoTracks[0].enabled ? '📷' : '🚫';
+                toggleVideoBtn.classList.toggle('off', !videoTracks[0].enabled);
+                document.getElementById('local-video').style.display = videoTracks[0].enabled ? 'block' : 'none';
+                console.log("Video toggled:", videoTracks[0].enabled);
+            }
+        }
+
+        // --- Swap Videos ---
+        function swapVideos() {
+             if (currentCallType !== 'video') return;
+             const localVideo = document.getElementById('local-video');
+             const remoteVideo = document.getElementById('remote-video');
+             if (localVideo && remoteVideo) {
+                 localVideo.classList.toggle('fullscreen');
+                 remoteVideo.classList.toggle('pip');
+                 console.log("Videos swapped");
+             }
+        }
+
+
+        // --- Core WebRTC functions (startCall, acceptCall, etc.) ---
+        // (No major changes here, just ensure controls are reset on hangup)
+         async function startCall(type) { /* ... same ... */ if(!currentFriendId||!myClientId||currentCallId)return; console.log(`Start ${type} call to ${currentFriendId}`); currentCallType=type; currentCallFriendId=currentFriendId; const pushRef=db.ref(`calls/${currentFriendId}`).push(); currentCallId=pushRef.key; try { localStream = await navigator.mediaDevices.getUserMedia({ video: type === 'video', audio: true }); showCallingScreen(type, `Calling ${currentFriendName}...`); attachMediaStream(document.getElementById('local-video'), localStream); } catch (e) { alert("Media err?"); if(currentCallId){db.ref(`calls/${currentFriendId}/${currentCallId}`).remove(); currentCallId=null;} return; } const pc=createPeerConnection(currentFriendId, currentCallId, type); if(!pc){hangUp(false); return;} rtpcConnections[currentCallId]=pc; localStream.getTracks().forEach(t=>{try{pc.addTrack(t, localStream);}catch(e){}}); try { const offer=await pc.createOffer(); await pc.setLocalDescription(offer); const data={from:myClientId, to:currentFriendId, type:type, offer:{type:offer.type, sdp:offer.sdp}}; await pushRef.set(data); const friendRef=db.ref(`calls/${myClientId}/${currentCallId}`); friendRef.on('value', async (s)=>{const pcc=rtpcConnections[currentCallId]; if(!pcc||pcc.signalingState==='closed') return; const d=s.val(); if(!d) return; if(d.answer&&!pcc.currentRemoteDescription){const a=new RTCSessionDescription(d.answer); try{await pcc.setRemoteDescription(a); startCallTimer();}catch(e){hangUp(true);}} if(d.declined){alert("Declined."); hangUp(false); s.ref.remove();} if(d.hungup){hangUp(false); s.ref.remove();}}); const iceRef=db.ref(`iceCandidates/${myClientId}/${currentCallId}`); iceRef.on('child_added', (s)=>{const pcc=rtpcConnections[currentCallId]; if(s.exists()&&pcc&&pcc.signalingState!=='closed'){pcc.addIceCandidate(new RTCIceCandidate(s.val())).catch(e=>{}); s.ref.remove();}}); } catch (e) { alert("Call init failed."); hangUp(false); } }
+         function showIncomingCallAlert(type, name, friendId, callId){/* ... same ... */ if (currentCallId){db.ref(`calls/${myClientId}/${callId}`).update({declined: true}); setTimeout(()=>db.ref(`calls/${myClientId}/${callId}`).remove(),5000); return;} currentCallId=callId; currentCallType=type; currentCallFriendId=friendId; incomingCallTitle.textContent=`Incoming ${type} call...`; incomingCallFrom.textContent=`from ${name}`; incomingCallAlert.style.display='block'; acceptCallBtn.onclick=acceptCall; declineCallBtn.onclick=declineCall;}
+         async function acceptCall(){/* ... same ... */ if(!currentCallId||!currentCallFriendId||!currentCallType)return; console.log(`Accept ${currentCallType} ${currentCallId}`); incomingCallAlert.style.display='none'; const ref=db.ref(`calls/${myClientId}/${currentCallId}`); try{localStream=await navigator.mediaDevices.getUserMedia({video:currentCallType==='video',audio:true}); const name=friendsList[currentCallFriendId]?.name||`AI(...)`; showCallingScreen(currentCallType, `Connecting with ${name}...`); attachMediaStream(document.getElementById('local-video'),localStream);}catch(e){alert("Media err?"); declineCall(); return;} const pc=createPeerConnection(currentCallFriendId, currentCallId, currentCallType); if(!pc){hangUp(false); return;} rtpcConnections[currentCallId]=pc; localStream.getTracks().forEach(t=>{try{pc.addTrack(t,localStream);}catch(e){}}); try{const data=(await ref.once('value')).val(); if(!data||!data.offer)throw Error("No offer"); const offer=new RTCSessionDescription(data.offer); await pc.setRemoteDescription(offer); const answer=await pc.createAnswer(); await pc.setLocalDescription(answer); const callerRef=db.ref(`calls/${currentCallFriendId}/${currentCallId}`); await callerRef.update({answer:{type:answer.type, sdp:answer.sdp}}); startCallTimer(); const callerIceRef=db.ref(`iceCandidates/${myClientId}/${currentCallId}`); callerIceRef.on('child_added', (s)=>{const pcc=rtpcConnections[currentCallId]; if(s.exists()&&pcc&&pcc.signalingState!=='closed'){pcc.addIceCandidate(new RTCIceCandidate(s.val())).catch(e=>{}); s.ref.remove();}}); ref.on('value', (s)=>{const d=s.val(); if(d&&d.hungup){hangUp(false); s.ref.remove();}}); } catch(e){alert("Connect failed."); hangUp(false);} }
+         function declineCall(){/* ... same ... */ console.log("Declining:", currentCallId); incomingCallAlert.style.display='none'; if(currentCallId&&currentCallFriendId){const ref=db.ref(`calls/${currentCallFriendId}/${currentCallId}`); ref.update({declined:true}); db.ref(`calls/${myClientId}/${currentCallId}`).remove(); db.ref(`iceCandidates/${myClientId}/${currentCallId}`).remove();} currentCallId=null; currentCallFriendId=null; currentCallType=null;}
+         function createPeerConnection(friendId, callId, type){/* ... same ... */ try{const pc=new RTCPeerConnection(pcConfig); pc.onicecandidate=(e)=>{if(e.candidate&&friendId&&callId){db.ref(`iceCandidates/${friendId}/${callId}`).push(e.candidate.toJSON());}}; pc.ontrack=(e)=>{const rv=document.getElementById('remote-video'); if(!remoteStream){remoteStream=new MediaStream();} if(!remoteStream.getTracks().includes(e.track)){remoteStream.addTrack(e.track);} attachMediaStream(rv, remoteStream); if(type==='voice'&&rv){rv.style.display='none';} else if(rv){rv.style.display='block';} const name=friendsList[friendId]?.name||`AI(...)`; if(callingStatus) callingStatus.textContent=`On call with ${name}`;}; pc.onconnectionstatechange=()=>{if(pc.connectionState==='disconnected'||pc.connectionState==='failed'||pc.connectionState==='closed'){hangUp(true);}}; pc.onsignalingstatechange=()=>{}; pc.oniceconnectionstatechange=()=>{if(pc.iceConnectionState==='failed'){hangUp(true);}}; return pc;} catch(e){alert("Call failed (Browser?)."); return null;}}
+         function showCallingScreen(type, status){/* ... reset button states ... */ const rv=document.getElementById('remote-video'); const lv=document.getElementById('local-video'); if(type==='voice'){if(rv) rv.style.display='none'; if(lv) lv.style.display='none'; if(toggleVideoBtn) toggleVideoBtn.style.display='none'; if(swapVideoBtn) swapVideoBtn.style.display = 'none';} else{if(rv) rv.style.display='block'; if(lv) lv.style.display='block'; if(toggleVideoBtn) toggleVideoBtn.style.display='flex'; if(swapVideoBtn) swapVideoBtn.style.display = 'flex';} if(callingStatus) callingStatus.textContent=status; if(callTimer) callTimer.textContent='00:00'; if(hangupButton) hangupButton.onclick=()=>hangUp(true); if(toggleMuteBtn){toggleMuteBtn.textContent='🎤'; toggleMuteBtn.classList.remove('muted');} if(toggleSpeakerBtn) toggleSpeakerBtn.classList.remove('active'); if(toggleVideoBtn){toggleVideoBtn.textContent='📷'; toggleVideoBtn.classList.remove('off');} if(lv) lv.classList.remove('fullscreen'); if(rv) rv.classList.remove('pip'); if(callingScreen) callingScreen.style.display='flex';}
+         function hangUp(sendSignal=true){/* ... same cleanup + reset button states ... */ if(!currentCallId&&!localStream&&!remoteStream&&callingScreen.style.display==='none')return; console.log("HangUp:", currentCallId, "Signal:", sendSignal); if(currentCallId&&rtpcConnections[currentCallId]){try{rtpcConnections[currentCallId].close();}catch(e){} delete rtpcConnections[currentCallId];} if(localStream){localStream.getTracks().forEach(t=>t.stop()); localStream=null;} if(remoteStream){const rv=document.getElementById('remote-video'); if(rv) rv.srcObject=null; remoteStream.getTracks().forEach(t=>t.stop()); remoteStream=null;} if(sendSignal&&currentCallId&&currentCallFriendId){const ref=db.ref(`calls/${currentCallFriendId}/${currentCallId}`); ref.update({hungup:true}).then(()=>setTimeout(()=>ref.remove(),5000)).catch(()=>{});} if(currentCallId&&myClientId){db.ref(`calls/${myClientId}/${currentCallId}`).remove(); db.ref(`iceCandidates/${myClientId}/${currentCallId}`).remove(); if(currentCallFriendId){db.ref(`iceCandidates/${currentCallFriendId}/${currentCallId}`).remove();}} if(callingScreen) callingScreen.style.display='none'; if(incomingCallAlert) incomingCallAlert.style.display='none'; if(callTimerInterval){clearInterval(callTimerInterval); callTimerInterval=null;} if(toggleMuteBtn){toggleMuteBtn.textContent='🎤'; toggleMuteBtn.classList.remove('muted');} if(toggleSpeakerBtn) toggleSpeakerBtn.classList.remove('active'); if(toggleVideoBtn){toggleVideoBtn.textContent='📷'; toggleVideoBtn.classList.remove('off');} currentCallId=null; currentCallType=null; currentCallFriendId=null; console.log("Call state reset");}
+         function attachMediaStream(element, stream){/* ... same ... */ if(element&&stream){try{if(element.srcObject!==stream){element.srcObject=stream;}}catch(e){}} else{if(stream){}}}
+         function startCallTimer(){/* ... same ... */ if(callTimerInterval)clearInterval(callTimerInterval); let s=0; if(callTimer) callTimer.textContent='00:00'; callTimerInterval=setInterval(()=>{s++; const m=Math.floor(s/60).toString().padStart(2,'0'); const ss=(s%60).toString().padStart(2,'0'); if(callTimer) callTimer.textContent=`${m}:${ss}`;}, 1000);}
+
+
+          // --- Touch Event Handlers for Long Press ---
+        let touchStartX, touchStartY, isMoving;
+
+        function handleTouchStart(e, id, callback) {
+             clearTimeout(longPressTimer); // Clear any previous timer
+             isMoving = false;
+             touchStartX = e.touches[0].clientX;
+             touchStartY = e.touches[0].clientY;
+             longPressTimer = setTimeout(() => {
+                 if (!isMoving) { // Only trigger if finger didn't move much
+                     console.log("Long press detected for:", id);
+                     callback(e.touches[0], id); // Use touch event coordinates
+                 }
+             }, LONG_PRESS_DURATION);
+        }
+        function handleTouchEnd() {
+             clearTimeout(longPressTimer);
+        }
+        function handleTouchMove(e) {
+            if (longPressTimer) {
+                const touchX = e.touches[0].clientX;
+                const touchY = e.touches[0].clientY;
+                // If finger moved more than 10px, cancel long press
+                if (Math.abs(touchX - touchStartX) > 10 || Math.abs(touchY - touchStartY) > 10) {
+                    isMoving = true; // Mark as moved
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+            }
+        }
+        // Function to position context menus accurately
+        function positionContextMenu(menuElement, x, y) {
+            const menuWidth = menuElement.offsetWidth || 200; // Use estimate if needed
+            const menuHeight = menuElement.offsetHeight || 200;
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+            let left = x;
+            let top = y;
+            if (left + menuWidth > screenWidth) left = screenWidth - menuWidth - 10;
+            if (top + menuHeight > screenHeight) top = screenHeight - menuHeight - 10;
+            if (left < 10) left = 10;
+            if (top < 10) top = 10;
+            menuElement.style.left = `${left}px`;
+            menuElement.style.top = `${top}px`;
+        }
 
     } catch (error) { // Catch Firebase init error
         console.error("Firebase Init Error:", error);
         document.body.innerHTML = `<div style="padding: 20px; text-align: center;"><h1>App Failed</h1><p>Init Error: ${error.message}</p></div>`;
     }
-}); // End of DOMContentLoaded 
+}); // End of DOMContentLoaded
+    
