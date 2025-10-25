@@ -4,22 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI Assistant</title>
-    <!-- Link to our CSS file -->
     <link rel="stylesheet" href="style.css">
-    <!-- NOTE: Firebase and Crypto scripts are moved to the end of the body -->
+    <!-- Scripts moved to end of body -->
 </head>
 <body>
 
-    <!-- App container holds all screens -->
     <div id="app-container">
 
-        <!-- SCREEN 1: PASSWORD LOCK (DEFAULT) -->
+        <!-- SCREEN 1: PASSWORD LOCK -->
         <div id="password-screen" class="screen">
-            <div class="header">
-                <div class="header-title">
-                    <h1>Secure Entry</h1>
-                </div>
-            </div>
+            <div class="header"><div class="header-title"><h1>Secure Entry</h1></div></div>
             <form id="password-form">
                 <p>Please enter the password to access.</p>
                 <input type="password" id="password-input" placeholder="Password">
@@ -28,40 +22,32 @@
             </form>
         </div>
 
-        <!-- SCREEN 2: CHAT LIST (FRIENDS) -->
+        <!-- SCREEN 2: CHAT LIST -->
         <div id="chat-list-screen" class="screen">
             <div class="header">
-                <div class="header-title">
-                    <h1>AI Assistants</h1>
-                </div>
+                <div class="header-title"><h1>AI Assistants</h1></div>
                 <div class="header-actions">
                     <button id="my-id-button" title="My Secret ID">ℹ️</button>
                     <button id="add-friend-button" title="Add New AI Bot">➕</button>
                 </div>
             </div>
-            <div id="chat-list">
-                <!-- Chat list items will be dynamically inserted here -->
-            </div>
+            <div id="chat-list"><!-- List items here --></div>
         </div>
 
-        <!-- SCREEN 3: CHAT ROOM (MESSAGES) -->
+        <!-- SCREEN 3: CHAT ROOM -->
         <div id="chat-room-screen" class="screen">
             <div class="header">
                 <button id="back-to-list-btn">←</button>
                 <div class="header-title" id="chat-room-header">
                     <h1 id="chat-room-name">AI Assistant</h1>
-                    <p id="chat-room-status" class="offline">● AI Offline</p> <!-- Default to offline -->
+                    <p id="chat-room-status" class="offline">● AI Offline</p>
                 </div>
                 <div class="header-actions">
                     <button id="voice-call-btn" title="Voice Call">🤖</button>
                     <button id="video-call-btn" title="Video Call">👽</button>
                 </div>
             </div>
-            <div id="chat-window">
-                <div id="message-list">
-                    <!-- Messages will be dynamically inserted here -->
-                </div>
-            </div>
+            <div id="chat-window"><div id="message-list"></div></div>
             <form id="message-form">
                 <textarea id="message-input" placeholder="Type a message..." rows="1"></textarea>
                 <button type="button" id="lock-button" title="Lock Message">🔒</button>
@@ -69,82 +55,22 @@
             </form>
         </div>
 
-    </div> <!-- End of app-container -->
+    </div> <!-- End #app-container -->
 
-    <!-- ======================================= -->
-    <!-- OVERLAYS (MODALS, MENUS, CALLING)     -->
-    <!-- ======================================= -->
+    <!-- OVERLAYS -->
+    <div id="modal" class="modal"> <div class="modal-content"> <h2 id="modal-title"></h2><p id="modal-text"></p> <input type="text" id="modal-input-text"><input type="password" id="modal-input-password"> <div class="modal-buttons"> <button id="modal-button-secondary" class="modal-button-secondary">Cancel</button> <button id="modal-button-primary" class="modal-button-primary">OK</button> </div> </div> </div>
+    <div id="context-menu"><!-- Dynamic --></div>
+    <div id="chat-list-context-menu"> <button id="context-rename">Rename AI Bot</button> <button id="context-lock">Set/Change Chat Lock</button> <button id="context-delete-chat" class="delete-danger">Delete Chat Permanently</button> </div>
+    <div id="incoming-call-alert"> <h2 id="incoming-call-title"></h2><p id="incoming-call-from"></p> <div class="modal-buttons"> <button id="decline-call-btn" class="modal-button-secondary delete-danger">Decline</button> <button id="accept-call-btn" class="modal-button-primary">Accept</button> </div> </div>
+    <div id="calling-screen"> <div id="video-container"> <video id="remote-video" autoplay playsinline></video> <video id="local-video" autoplay muted playsinline></video> </div> <div id="call-info-container"> <h2 id="calling-status">Connecting...</h2> <p id="call-timer">00:00</p> </div> <div id="call-controls-container"> <button id="toggle-mute-btn" title="Mute/Unmute">🎤</button> <button id="toggle-speaker-btn" title="Speaker On/Off">🔊</button> <button id="toggle-video-btn" title="Camera On/Off">📷</button> <button id="swap-video-btn" title="Swap Screens">🔄</button> <button id="hangup-button" title="Hang Up">📞</button> </div> </div>
 
-    <!-- Modal for adding friend, setting passwords, etc. -->
-    <div id="modal" class="modal">
-        <div class="modal-content">
-            <h2 id="modal-title">Modal Title</h2>
-            <p id="modal-text">Some text here.</p>
-            <input type="text" id="modal-input-text" placeholder="Enter text">
-            <input type="password" id="modal-input-password" placeholder="Enter password">
-            <div class="modal-buttons">
-                <button id="modal-button-secondary" class="modal-button-secondary">Cancel</button>
-                <button id="modal-button-primary" class="modal-button-primary">OK</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Context Menu for messages (long press) -->
-    <div id="context-menu">
-        <!-- Dynamic content via JS -->
-    </div>
-
-    <!-- Context Menu for Chat List (long press) -->
-    <div id="chat-list-context-menu">
-        <button id="context-rename">Rename AI Bot</button>
-        <button id="context-lock">Set/Change Chat Lock</button>
-        <!-- <button id="context-remove-lock">Remove Chat Lock</button> --> <!-- Combined into Set/Change -->
-        <button id="context-delete-chat" class="delete-danger">Delete Chat Permanently</button>
-    </div>
-
-    <!-- Incoming Call Alert -->
-    <div id="incoming-call-alert">
-        <h2 id="incoming-call-title">Incoming Call...</h2>
-        <p id="incoming-call-from">from AI Bot</p>
-        <div class="modal-buttons">
-            <button id="decline-call-btn" class="modal-button-secondary delete-danger">Decline</button>
-            <button id="accept-call-btn" class="modal-button-primary">Accept</button>
-        </div>
-    </div>
-
-    <!-- Full-screen Calling UI -->
-    <div id="calling-screen">
-        <div id="video-container">
-            <video id="remote-video" autoplay playsinline></video>
-            <video id="local-video" autoplay muted playsinline></video>
-        </div>
-        <div id="call-info-container">
-            <h2 id="calling-status">Connecting...</h2>
-            <p id="call-timer">00:00</p>
-        </div>
-        <div id="call-controls-container">
-            <button id="toggle-mute-btn" title="Mute/Unmute">🎤</button>
-            <button id="toggle-speaker-btn" title="Speaker On/Off">🔊</button>
-            <button id="toggle-video-btn" title="Camera On/Off">📷</button>
-            <button id="swap-video-btn" title="Swap Screens">🔄</button>
-            <button id="hangup-button" title="Hang Up">📞</button>
-        </div>
-    </div>
-
-    <!-- ======================================= -->
-    <!-- SCRIPTS (Moved to end of body)        -->
-    <!-- ======================================= -->
-
-    <!-- Firebase Libraries -->
+    <!-- SCRIPTS -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
-
-    <!-- Crypto.js Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-
-    <!-- Link to our JavaScript file -->
     <script src="script.js"></script>
-
 </body>
 </html>
+
+
