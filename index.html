@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI Assistant</title>
-    
     <!-- Link to our CSS file -->
     <link rel="stylesheet" href="style.css">
+    <!-- NOTE: Firebase and Crypto scripts are moved to the end of the body -->
 </head>
 <body>
 
@@ -24,7 +24,7 @@
                 <p>Please enter the password to access.</p>
                 <input type="password" id="password-input" placeholder="Password">
                 <button type="submit" id="password-submit">Unlock</button>
-                <p id="password-error">Incorrect password. Please try again.</p>
+                <p id="password-error">Incorrect password.</p>
             </form>
         </div>
 
@@ -46,27 +46,22 @@
 
         <!-- SCREEN 3: CHAT ROOM (MESSAGES) -->
         <div id="chat-room-screen" class="screen">
-            <!-- Header (Fixed at top) -->
             <div class="header">
                 <button id="back-to-list-btn">←</button>
                 <div class="header-title" id="chat-room-header">
                     <h1 id="chat-room-name">AI Assistant</h1>
-                    <p id="chat-room-status">Offline</p>
+                    <p id="chat-room-status" class="offline">● AI Offline</p> <!-- Default to offline -->
                 </div>
                 <div class="header-actions">
                     <button id="voice-call-btn" title="Voice Call">🤖</button>
                     <button id="video-call-btn" title="Video Call">👽</button>
                 </div>
             </div>
-            
-            <!-- Message List (Takes all available space) -->
             <div id="chat-window">
                 <div id="message-list">
                     <!-- Messages will be dynamically inserted here -->
                 </div>
             </div>
-            
-            <!-- Message Form (Fixed at bottom) -->
             <form id="message-form">
                 <textarea id="message-input" placeholder="Type a message..." rows="1"></textarea>
                 <button type="button" id="lock-button" title="Lock Message">🔒</button>
@@ -74,10 +69,13 @@
             </form>
         </div>
 
-    </div>
-    
-    <!-- OVERLAYS (MODALS, MENUS, CALLING) -->
-    <!-- (Saare overlays HTML mein yahaan hain) -->
+    </div> <!-- End of app-container -->
+
+    <!-- ======================================= -->
+    <!-- OVERLAYS (MODALS, MENUS, CALLING)     -->
+    <!-- ======================================= -->
+
+    <!-- Modal for adding friend, setting passwords, etc. -->
     <div id="modal" class="modal">
         <div class="modal-content">
             <h2 id="modal-title">Modal Title</h2>
@@ -90,19 +88,21 @@
             </div>
         </div>
     </div>
-    
+
+    <!-- Context Menu for messages (long press) -->
     <div id="context-menu">
-        <button id="context-delete-me">Delete for Me</button>
-        <button id="context-delete-everyone" class="delete-danger">Delete for Everyone</button>
+        <!-- Dynamic content via JS -->
     </div>
-    
+
+    <!-- Context Menu for Chat List (long press) -->
     <div id="chat-list-context-menu">
         <button id="context-rename">Rename AI Bot</button>
         <button id="context-lock">Set/Change Chat Lock</button>
-        <button id="context-remove-lock">Remove Chat Lock</button>
+        <!-- <button id="context-remove-lock">Remove Chat Lock</button> --> <!-- Combined into Set/Change -->
         <button id="context-delete-chat" class="delete-danger">Delete Chat Permanently</button>
     </div>
-    
+
+    <!-- Incoming Call Alert -->
     <div id="incoming-call-alert">
         <h2 id="incoming-call-title">Incoming Call...</h2>
         <p id="incoming-call-from">from AI Bot</p>
@@ -111,7 +111,8 @@
             <button id="accept-call-btn" class="modal-button-primary">Accept</button>
         </div>
     </div>
-    
+
+    <!-- Full-screen Calling UI -->
     <div id="calling-screen">
         <div id="video-container">
             <video id="remote-video" autoplay playsinline></video>
@@ -122,22 +123,28 @@
             <p id="call-timer">00:00</p>
         </div>
         <div id="call-controls-container">
-            <button id="hangup-button">📞</button>
+            <button id="toggle-mute-btn" title="Mute/Unmute">🎤</button>
+            <button id="toggle-speaker-btn" title="Speaker On/Off">🔊</button>
+            <button id="toggle-video-btn" title="Camera On/Off">📷</button>
+            <button id="swap-video-btn" title="Swap Screens">🔄</button>
+            <button id="hangup-button" title="Hang Up">📞</button>
         </div>
     </div>
 
-    <!-- 
-      SCRIPT TAGS KO BODY KE END MEIN DAAL DIYA HAI - YAHI FIX HAI
-    -->
+    <!-- ======================================= -->
+    <!-- SCRIPTS (Moved to end of body)        -->
+    <!-- ======================================= -->
+
+    <!-- Firebase Libraries -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+
+    <!-- Crypto.js Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    
-    <!-- Hamari logic file sabse aakhir mein -->
+
+    <!-- Link to our JavaScript file -->
     <script src="script.js"></script>
-    
+
 </body>
 </html>
-
-
